@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { currentUser } from "./session";
 import { UserError } from "./portal";
+import { SetupError } from "./backend";
 import type { User } from "@/lib/types";
 
 export function ok<T>(data: T, init?: ResponseInit) {
@@ -31,6 +32,10 @@ export function authed(handler: Handler, opts: { role?: number } = {}) {
       return await handler(user, body);
     } catch (e) {
       if (e instanceof UserError) return fail(e.message);
+      if (e instanceof SetupError) {
+        console.error(e);
+        return fail(e.message, 500);
+      }
       console.error(e);
       return fail("サーバーでエラーが発生しました。時間をおいて再度お試しください。", 500);
     }

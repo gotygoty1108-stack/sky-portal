@@ -347,7 +347,11 @@ export default function DronePortal() {
         )}
       </main>
 
-      {modal?.kind === "customer" && <CustomerFormModal initialData={modal.editing} onClose={() => setModal(null)} onSave={handleSaveCustomer} />}
+      {modal?.kind === "customer" && <CustomerFormModal
+          initialData={modal.editing}
+          isAdmin={user.role === ROLE_ADMIN}
+          teams={[...new Set(customers.map((c) => c.team).filter(Boolean))].sort()}
+          onClose={() => setModal(null)} onSave={handleSaveCustomer} />}
       {modal?.kind === "record" && <RecordFormModal onClose={() => setModal(null)} onSave={handleAddRecord} />}
       {modal?.kind === "finalEstimate" && selected && (
         <DocumentFormModal

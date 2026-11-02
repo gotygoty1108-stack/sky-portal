@@ -6,7 +6,7 @@ import { todayInput } from "@/lib/format";
 import { CUSTOMER_STATUSES, type Customer, type CustomerFields } from "@/lib/types";
 import { Button, Field, inputClass, Modal } from "./ui";
 
-const EMPTY_CUSTOMER: CustomerFields = { name: "", kana: "", contactPerson: "", email: "", phone: "", address: "", status: "提案中" };
+const EMPTY_CUSTOMER: CustomerFields = { name: "", kana: "", contactPerson: "", email: "", phone: "", address: "", status: "提案中", team: "" };
 
 function useSubmit<T>(onSave: (data: T) => Promise<void>) {
   const [saving, setSaving] = useState(false);
@@ -23,10 +23,14 @@ function useSubmit<T>(onSave: (data: T) => Promise<void>) {
 
 export function CustomerFormModal({
   initialData,
+  isAdmin,
+  teams,
   onClose,
   onSave,
 }: {
   initialData: Customer | null;
+  isAdmin: boolean;
+  teams: string[];
   onClose: () => void;
   onSave: (data: CustomerFields & { id?: string }) => Promise<void>;
 }) {
@@ -40,6 +44,7 @@ export function CustomerFormModal({
           phone: initialData.phone,
           address: initialData.address,
           status: initialData.status || EMPTY_CUSTOMER.status,
+          team: initialData.team,
         }
       : EMPTY_CUSTOMER,
   );
@@ -100,6 +105,16 @@ export function CustomerFormModal({
         <Field label="所在地" className="md:col-span-2">
           <input name="address" value={formData.address} onChange={handleChange} className={inputClass} placeholder="例: 東京都新宿区..." />
         </Field>
+        {isAdmin && (
+          <Field label="担当チーム（team）" className="md:col-span-2">
+            <input name="team" list="team-options" value={formData.team} onChange={handleChange} className={inputClass} placeholder="同じteamの営業アカウントに表示されます" />
+            <datalist id="team-options">
+              {teams.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
+          </Field>
+        )}
       </form>
     </Modal>
   );

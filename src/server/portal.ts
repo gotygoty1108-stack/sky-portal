@@ -79,8 +79,13 @@ function toCustomerBase(r: Row): CustomerBase {
     status: str(r.status),
     createdAt: str(r.createdAt),
     updatedAt: str(r.updatedAt),
+    team: str(r.team),
   };
 }
+
+const isAdmin = (user: User) => user.role === ROLE_ADMIN;
+// Sales accounts only see customers of their own team; admins see everything.
+const canAccess = (r: Row, user: User) => isAdmin(user) || str(r.team).trim() === user.team;
 
 function parseDetails(v: Cell | undefined): EstimateDetail[] {
   try {
@@ -98,12 +103,17 @@ export async function login(userId: string, password: string): Promise<User | nu
   const account = Accounts.rows.find((a) => str(a.id) === userId && str(a.password) === password);
   if (!account) return null;
   const role = parseInt(str(account.role), 10);
-  return { id: str(account.id), name: str(account.name) || str(account.id), role: Number.isFinite(role) ? role : 1 };
+  return {
+    id: str(account.id),
+    name: str(account.name) || str(account.id),
+    role: Number.isFinite(role) ? role : 1,
+    team: str(account.team).trim(),
+  };
 }
 
 // ---------- read ----------
 
-export async function getInitialData(): Promise<Customer[]> {
+export async function getInitialData(user: User): Promise<Customer[]> {
   const t = await backend().readMany(["Customers", "Records", "Estimates", "Contracts"]);
   const group = <T extends { customerId: string; date: string; createdAt: string }>(items: T[]) => {
     const map = new Map<string, T[]>();
@@ -150,7 +160,7 @@ export async function getInitialData(): Promise<Customer[]> {
   );
 
   return t.Customers.rows
-    .filter((r) => str(r.id))
+    .filter((r) => str(r.id) && canAccess(r, user))
     .map((r) => {
       const c = toCustomerBase(r);
       return {
@@ -165,7 +175,7 @@ export async function getInitialData(): Promise<Customer[]> {
 
 // ---------- write ----------
 
-function cleanCustomerFields(input: Record<string, unknown>): CustomerFields {
+function cleanCustomerFields(input: Record<string, unknown>, user: User): CustomerFields {
   const fields: CustomerFields = {
     name: cleanText(input.name),
     kana: cleanText(input.kana),
@@ -174,6 +184,7 @@ function cleanCustomerFields(input: Record<string, unknown>): CustomerFields {
     phone: cleanText(input.phone, 50),
     address: cleanText(input.address, 300),
     status: cleanText(input.status, 20),
+    team: isAdmin(user) ? cleanText(input.team, 50) : user.team,
   };
   if (!fields.name) throw new UserError("企業名を入力してください。");
   if (!fields.contactPerson) throw new UserError("担当者名を入力してください。");
@@ -181,8 +192,8 @@ function cleanCustomerFields(input: Record<string, unknown>): CustomerFields {
   return fields;
 }
 
-export function saveCustomer(input: Record<string, unknown>): Promise<{ customer: CustomerBase; isNew: boolean }> {
-  const fields = cleanCustomerFields(input);
+export function saveCustomer(input: Record<string, unknown>, user: User): Promise<{ customer: CustomerBase; isNew: boolean }> {
+  const fields = cleanCustomerFields(input, user);
   const id = cleanText(input.id, 50);
   return withLock(async () => {
     const { Customers } = await backend().readMany(["Customers"]);
@@ -202,23 +213,23 @@ export function saveCustomer(input: Record<string, unknown>): Promise<{ customer
       return { customer, isNew: true };
     }
     const row = Customers.rows.find((r) => str(r.id) === id);
-    if (!row) throw new UserError("対象の顧客データが見つかりません。");
+    if (!row || !canAccess(row, user)) throw new UserError("対象の顧客データが見つかりません。");
     await backend().updateCells("Customers", row._row, { ...fields, updatedAt: now });
     return { customer: { ...toCustomerBase(row), ...fields, updatedAt: now }, isNew: false };
   });
 }
 
-async function assertCustomer(customerId: string) {
+async function assertCustomer(customerId: string, user: User) {
   const { Customers } = await backend().readMany(["Customers"]);
-  if (!Customers.rows.some((r) => str(r.id) === customerId)) throw new UserError("対象の顧客データが見つかりません。");
+  if (!Customers.rows.some((r) => str(r.id) === customerId && canAccess(r, user))) throw new UserError("対象の顧客データが見つかりません。");
 }
 
-export async function addRecord(input: Record<string, unknown>): Promise<CustomerRecord> {
+export async function addRecord(input: Record<string, unknown>, user: User): Promise<CustomerRecord> {
   const customerId = cleanText(input.customerId, 50);
   const title = cleanText(input.title);
   const content = cleanText(input.content, 5000);
   if (!title) throw new UserError("件名を入力してください。");
-  await assertCustomer(customerId);
+  await assertCustomer(customerId, user);
   const record: CustomerRecord = {
     id: newId("R"),
     customerId,
@@ -249,7 +260,7 @@ export async function saveEstimate(input: Record<string, unknown>, user: User): 
   if (type === "本見積" && user.role !== ROLE_ADMIN) throw new UserError("本見積の登録は管理者のみ可能です。");
   const title = cleanText(input.title) || (type === "仮見積" ? "空撮業務 仮見積もり" : "");
   if (!title) throw new UserError("件名を入力してください。");
-  await assertCustomer(customerId);
+  await assertCustomer(customerId, user);
   const estimate: Estimate = {
     id: newId("E"),
     customerId,
@@ -264,11 +275,11 @@ export async function saveEstimate(input: Record<string, unknown>, user: User): 
   return estimate;
 }
 
-export async function saveContract(input: Record<string, unknown>): Promise<Contract> {
+export async function saveContract(input: Record<string, unknown>, user: User): Promise<Contract> {
   const customerId = cleanText(input.customerId, 50);
   const title = cleanText(input.title);
   if (!title) throw new UserError("件名を入力してください。");
-  await assertCustomer(customerId);
+  await assertCustomer(customerId, user);
   const contract: Contract = {
     id: newId("K"),
     customerId,
