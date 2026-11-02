@@ -177,7 +177,8 @@ class SheetsBackend implements Backend {
   private async ensureHeaders(name: SheetName, headers: string[]): Promise<string[]> {
     const expected: readonly string[] = SHEET_HEADERS[name];
     const used = headers.filter(Boolean);
-    if (used.length > 0 && !used.includes("id")) {
+    // The first column (id / key) identifies a real header row.
+    if (used.length > 0 && !used.includes(expected[0])) {
       throw new SetupError(`「${name}」シートの1行目に見出し（${expected.join(", ")}）がありません。1行目に見出しを入力してください。`);
     }
     const missing = expected.filter((h) => !used.includes(h));
