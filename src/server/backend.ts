@@ -62,6 +62,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 class SheetsBackend implements Backend {
   private jwt: JWT | null = null;
   private ready: Promise<void> | null = null;
+  private sheetMeta = new Map<string, { sheetId: number; columnCount: number }>();
   private headerCache = new Map<string, string[]>();
 
   private get id(): string {
@@ -108,18 +109,25 @@ class SheetsBackend implements Backend {
   private ensureSheets(): Promise<void> {
     if (!this.ready) {
       this.ready = (async () => {
-        const meta = await this.api<{ sheets: { properties: { title: string } }[] }>("?fields=sheets.properties.title");
-        const existing = new Set(meta.sheets.map((s) => s.properties.title));
-        const missing = (Object.keys(SHEET_HEADERS) as SheetName[]).filter((n) => !existing.has(n));
+        await this.loadMeta();
+        const missing = (Object.keys(SHEET_HEADERS) as SheetName[]).filter((n) => !this.sheetMeta.has(n));
         if (missing.length === 0) return;
-        await this.api(":batchUpdate", {
-          method: "POST",
-          body: JSON.stringify({
-            requests: missing.map((title) => ({
-              addSheet: { properties: { title, gridProperties: { frozenRowCount: 1 } } },
-            })),
-          }),
-        });
+        try {
+          await this.api(":batchUpdate", {
+            method: "POST",
+            body: JSON.stringify({
+              requests: missing.map((title) => ({
+                addSheet: { properties: { title, gridProperties: { frozenRowCount: 1 } } },
+              })),
+            }),
+          });
+        } catch (e) {
+          // Another request (parallel serverless instance) may have created the sheets first.
+          await this.loadMeta();
+          if (missing.some((n) => !this.sheetMeta.has(n))) throw e;
+          return;
+        }
+        await this.loadMeta();
         await this.api("/values:batchUpdate", {
           method: "POST",
           body: JSON.stringify({
@@ -133,6 +141,16 @@ class SheetsBackend implements Backend {
       });
     }
     return this.ready;
+  }
+
+  private async loadMeta() {
+    const meta = await this.api<{ sheets: { properties: { title: string; sheetId: number; gridProperties?: { columnCount?: number } } }[] }>(
+      "?fields=sheets.properties(title,sheetId,gridProperties.columnCount)",
+    );
+    this.sheetMeta.clear();
+    for (const s of meta.sheets) {
+      this.sheetMeta.set(s.properties.title, { sheetId: s.properties.sheetId, columnCount: s.properties.gridProperties?.columnCount ?? 26 });
+    }
   }
 
   async readMany(names: SheetName[]): Promise<Record<string, Table>> {
@@ -165,6 +183,16 @@ class SheetsBackend implements Backend {
     const missing = expected.filter((h) => !used.includes(h));
     if (missing.length === 0) return headers;
     const start = used.length === 0 ? 0 : headers.length;
+    // Writing past the sheet's last column fails, so widen the grid first.
+    const meta = this.sheetMeta.get(name);
+    const needed = start + missing.length;
+    if (meta && needed > meta.columnCount) {
+      await this.api(":batchUpdate", {
+        method: "POST",
+        body: JSON.stringify({ requests: [{ appendDimension: { sheetId: meta.sheetId, dimension: "COLUMNS", length: needed - meta.columnCount } }] }),
+      });
+      meta.columnCount = needed;
+    }
     await this.api("/values:batchUpdate", {
       method: "POST",
       body: JSON.stringify({

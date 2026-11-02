@@ -93,14 +93,22 @@ export default function DronePortal() {
 
   const loadData = useCallback(async (u: User) => {
     try {
-      const [data, cfg] = await Promise.all([api<Customer[]>("/api/data"), api<EstimateConfig>("/api/settings")]);
+      const data = await api<Customer[]>("/api/data");
+      let cfg = readCache()?.config;
+      try {
+        cfg = await api<EstimateConfig>("/api/settings");
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) throw err;
+        alert(`見積設定の読み込みに失敗しました（初期設定で表示します）: ${err instanceof Error ? err.message : String(err)}`);
+      }
       setCustomers(data);
       setConfig(parseConfig(cfg));
       setCachedAt(null);
       writeCache(u, data, parseConfig(cfg));
     } catch (err) {
       const cache = readCache();
-      if (err instanceof ApiError && err.status === 401) throw err;
+      // Fall back to cached data only when the server is unreachable; show real server errors.
+      if (!(err instanceof ApiError && err.status === 0)) throw err;
       if (cache && cache.user.id === u.id) {
         setCustomers(cache.customers);
         setConfig(parseConfig(cache.config));
@@ -124,13 +132,13 @@ export default function DronePortal() {
         const cache = readCache();
         if (err instanceof ApiError && err.status === 401) {
           resetToLogin();
-        } else if (cache) {
+        } else if (cache && err instanceof ApiError && err.status === 0) {
           setUser(cache.user);
           setCustomers(cache.customers);
           setConfig(parseConfig(cache.config));
           setCachedAt(cache.savedAt);
         } else {
-          setLoginError(err instanceof Error ? err.message : "読み込みに失敗しました。");
+          resetToLogin(`読み込みに失敗しました: ${err instanceof Error ? err.message : String(err)}`);
         }
       } finally {
         setBooting(false);
