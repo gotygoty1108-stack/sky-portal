@@ -5,7 +5,23 @@ import type { ContractData, EstimateData } from "./estimate";
 
 export type User = { id: string; name: string; role: number; team: string };
 
-export const CUSTOMER_STATUSES = ["提案中", "契約進行中", "契約済み"] as const;
+// Customer status is derived from the documents; it is never edited by hand.
+export const CUSTOMER_STATUSES = ["顧客情報登録済み", "仮見積作成済み", "本見積作成済み", "契約済み", "業務請負記録済み"] as const;
+
+export function computeStatus(c: {
+  estimates: { type: string }[];
+  contracts: { status: string; confirmedAt: string }[];
+  records: { createdAt: string }[];
+}): string {
+  const confirmed = c.contracts.filter((k) => k.status === "confirmed").map((k) => k.confirmedAt).sort();
+  const contracted = confirmed.length > 0;
+  // Only records added after the contract count (pre-contract meeting notes don't). Timestamps are "YYYY/MM/DD HH:MM:SS".
+  if (contracted && c.records.some((r) => r.createdAt >= confirmed[0])) return "業務請負記録済み";
+  if (contracted) return "契約済み";
+  if (c.estimates.some((e) => e.type === "本見積")) return "本見積作成済み";
+  if (c.estimates.some((e) => e.type === "仮見積")) return "仮見積作成済み";
+  return "顧客情報登録済み";
+}
 export const ESTIMATE_TYPES = ["仮見積", "本見積"] as const;
 
 export type EstimateType = (typeof ESTIMATE_TYPES)[number];

@@ -28,9 +28,9 @@ export function Badge({ children, type = "default" }: { children: ReactNode; typ
 }
 
 export function statusBadgeType(status: string): BadgeType {
-  if (status === "契約済み") return "success";
-  if (status === "提案中") return "warning";
-  if (status === "契約進行中") return "primary";
+  if (status === "契約済み" || status === "業務請負記録済み") return "success";
+  if (status === "本見積作成済み") return "primary";
+  if (status === "仮見積作成済み") return "warning";
   return "default";
 }
 

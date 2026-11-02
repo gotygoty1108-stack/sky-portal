@@ -1,6 +1,7 @@
 import { backend, type Cell, type Row } from "./backend";
 import {
   CUSTOMER_STATUSES,
+  computeStatus,
   ESTIMATE_TYPES,
   ROLE_ADMIN,
   type Contract,
@@ -203,17 +204,27 @@ export async function getInitialData(user: User): Promise<Customer[]> {
     .filter((r) => str(r.id) && canAccess(r, user))
     .map((r) => {
       const c = toCustomerBase(r);
-      return {
-        ...c,
-        records: records.get(c.id) || [],
-        estimates: estimates.get(c.id) || [],
-        contracts: contracts.get(c.id) || [],
-      };
+      const docs = { records: records.get(c.id) || [], estimates: estimates.get(c.id) || [], contracts: contracts.get(c.id) || [] };
+      return { ...c, ...docs, status: computeStatus(docs) };
     })
     .reverse();
 }
 
 // ---------- write ----------
+
+// Keeps the status column in the sheet in sync with the documents (call inside withLock after a write).
+async function refreshCustomerStatus(customerId: string) {
+  const t = await backend().readMany(["Customers", "Records", "Estimates", "Contracts"]);
+  const row = t.Customers.rows.find((r) => str(r.id) === customerId);
+  if (!row) return;
+  const of = (rows: Row[]) => rows.filter((r) => str(r.customerId) === customerId);
+  const status = computeStatus({
+    estimates: of(t.Estimates.rows).map((r) => ({ type: str(r.type) })),
+    contracts: of(t.Contracts.rows).map((r) => ({ status: str(r.status), confirmedAt: str(r.confirmedAt) })),
+    records: of(t.Records.rows).map((r) => ({ createdAt: str(r.createdAt) })),
+  });
+  if (str(row.status) !== status) await backend().updateCells("Customers", row._row, { status });
+}
 
 function cleanCustomerFields(input: Record<string, unknown>, user: User): CustomerFields {
   const fields: CustomerFields = {
@@ -223,12 +234,11 @@ function cleanCustomerFields(input: Record<string, unknown>, user: User): Custom
     email: cleanText(input.email),
     phone: cleanText(input.phone, 50),
     address: cleanText(input.address, 300),
-    status: cleanText(input.status, 20),
+    status: CUSTOMER_STATUSES[0],
     team: isAdmin(user) ? cleanText(input.team, 50) : user.team,
   };
   if (!fields.name) throw new UserError("企業名を入力してください。");
   if (!fields.contactPerson) throw new UserError("担当者名を入力してください。");
-  if (!(CUSTOMER_STATUSES as readonly string[]).includes(fields.status)) fields.status = CUSTOMER_STATUSES[0];
   return fields;
 }
 
@@ -254,8 +264,10 @@ export function saveCustomer(input: Record<string, unknown>, user: User): Promis
     }
     const row = Customers.rows.find((r) => str(r.id) === id);
     if (!row || !canAccess(row, user)) throw new UserError("対象の顧客データが見つかりません。");
-    await backend().updateCells("Customers", row._row, { ...fields, updatedAt: now });
-    return { customer: { ...toCustomerBase(row), ...fields, updatedAt: now }, isNew: false };
+    const { status: _status, ...editable } = fields;
+    void _status;
+    await backend().updateCells("Customers", row._row, { ...editable, updatedAt: now });
+    return { customer: { ...toCustomerBase(row), ...editable, updatedAt: now }, isNew: false };
   });
 }
 
@@ -278,7 +290,10 @@ export async function addRecord(input: Record<string, unknown>, user: User): Pro
     content,
     createdAt: nowString(),
   };
-  await withLock(() => backend().append("Records", record));
+  await withLock(async () => {
+    await backend().append("Records", record);
+    await refreshCustomerStatus(customerId);
+  });
   return record;
 }
 
@@ -486,6 +501,7 @@ export async function saveEstimate(input: Record<string, unknown>, user: User): 
       updatedAt: now,
     };
     await backend().append("Estimates", { ...estimate, details: JSON.stringify(estimate.details), data: JSON.stringify(data) });
+    await refreshCustomerStatus(customerId);
     return estimate;
   });
 }
@@ -553,10 +569,7 @@ export async function saveContract(input: Record<string, unknown>, user: User): 
       };
       await backend().append("Contracts", { ...contract, data: JSON.stringify(data) });
     }
-    if (confirm) {
-      const row = await loadCustomerRow(contract.customerId, user);
-      await backend().updateCells("Customers", row._row, { status: "契約済み", updatedAt: now });
-    }
+    await refreshCustomerStatus(contract.customerId);
     return contract;
   });
 }
