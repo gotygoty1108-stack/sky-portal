@@ -31,3 +31,16 @@ export function todayInput(): string {
 export function byNewest<T extends { date?: string; createdAt?: string }>(a: T, b: T): number {
   return toTime(b.date) - toTime(a.date) || toTime(b.createdAt) - toTime(a.createdAt);
 }
+
+/** "2026/10/05" or "2026-10-05 10:00" → "2026-10-05" for <input type="date">. */
+export function toInputDate(value: string | undefined | null): string {
+  const t = toTime(value);
+  if (!t) return "";
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export function addDaysInput(days: number): string {
+  const d = new Date(Date.now() + days * 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}

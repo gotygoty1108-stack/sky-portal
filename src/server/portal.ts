@@ -4,6 +4,7 @@ import {
   ESTIMATE_TYPES,
   ROLE_ADMIN,
   type Contract,
+  type ContractStatus,
   type Customer,
   type CustomerBase,
   type CustomerFields,
@@ -13,6 +14,20 @@ import {
   type User,
 } from "@/lib/types";
 import { byNewest } from "@/lib/format";
+import {
+  adjustRange,
+  FLOW_CATEGORIES,
+  parseConfig,
+  sumLines,
+  worstVerdict,
+  type ContractData,
+  type EstimateConfig,
+  type EstimateData,
+  type FlowAnswer,
+  type Line,
+  type PriceGroup,
+  type Verdict,
+} from "@/lib/estimate";
 
 export class UserError extends Error {}
 
@@ -57,12 +72,6 @@ function cleanDate(v: unknown): string {
   return nowString().slice(0, 10);
 }
 
-function cleanAmount(v: unknown): number {
-  const n = Math.round(Number(v));
-  if (!Number.isFinite(n) || n < 0 || n > 10_000_000_000) throw new UserError("金額が正しくありません。");
-  return n;
-}
-
 function newId(prefix: string): string {
   return `${prefix}-${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, "0")}`;
 }
@@ -94,6 +103,57 @@ function parseDetails(v: Cell | undefined): EstimateDetail[] {
   } catch {
     return [];
   }
+}
+
+function parseJson<T>(v: Cell | undefined): T | null {
+  try {
+    const parsed = JSON.parse(str(v));
+    return parsed && typeof parsed === "object" ? (parsed as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function toEstimate(r: Row): Estimate {
+  const details = parseDetails(r.details);
+  const data = parseJson<EstimateData>(r.data) || {
+    // Estimates saved before the workflow existed only have `details`.
+    lines: details.map((d) => ({
+      name: d.name,
+      unitPrice: typeof d.amount === "number" ? d.amount : 0,
+      qty: d.qty,
+      unit: d.unit,
+    })),
+  };
+  return {
+    id: str(r.id),
+    customerId: str(r.customerId),
+    date: str(r.date),
+    title: str(r.title),
+    amount: num(r.amount),
+    type: str(r.type),
+    details,
+    sourceId: str(r.sourceId),
+    data: { ...data, lines: Array.isArray(data.lines) ? data.lines : [] },
+    createdAt: str(r.createdAt),
+    updatedAt: str(r.updatedAt),
+  };
+}
+
+function toContract(r: Row): Contract {
+  return {
+    id: str(r.id),
+    customerId: str(r.customerId),
+    date: str(r.date),
+    title: str(r.title),
+    amount: num(r.amount),
+    estimateId: str(r.estimateId),
+    status: str(r.status) === "confirmed" ? "confirmed" : "draft",
+    data: parseJson<ContractData>(r.data),
+    createdAt: str(r.createdAt),
+    updatedAt: str(r.updatedAt),
+    confirmedAt: str(r.confirmedAt),
+  };
 }
 
 // ---------- login ----------
@@ -136,28 +196,8 @@ export async function getInitialData(user: User): Promise<Customer[]> {
       createdAt: str(r.createdAt),
     })),
   );
-  const estimates = group<Estimate>(
-    t.Estimates.rows.map((r) => ({
-      id: str(r.id),
-      customerId: str(r.customerId),
-      date: str(r.date),
-      title: str(r.title),
-      amount: num(r.amount),
-      type: str(r.type),
-      details: parseDetails(r.details),
-      createdAt: str(r.createdAt),
-    })),
-  );
-  const contracts = group<Contract>(
-    t.Contracts.rows.map((r) => ({
-      id: str(r.id),
-      customerId: str(r.customerId),
-      date: str(r.date),
-      title: str(r.title),
-      amount: num(r.amount),
-      createdAt: str(r.createdAt),
-    })),
-  );
+  const estimates = group<Estimate>(t.Estimates.rows.filter((r) => str(r.id)).map(toEstimate));
+  const contracts = group<Contract>(t.Contracts.rows.filter((r) => str(r.id)).map(toContract));
 
   return t.Customers.rows
     .filter((r) => str(r.id) && canAccess(r, user))
@@ -242,52 +282,281 @@ export async function addRecord(input: Record<string, unknown>, user: User): Pro
   return record;
 }
 
-function cleanDetails(v: unknown): EstimateDetail[] {
-  if (!Array.isArray(v)) return [];
-  return v.slice(0, 50).map((d) => ({
-    name: cleanText(d?.name),
-    amount: typeof d?.amount === "number" ? d.amount : cleanText(d?.amount, 20),
-    qty: Number(d?.qty) || 0,
-    unit: cleanText(d?.unit, 10),
-    subtotal: Number(d?.subtotal) || 0,
+// ---------- settings ----------
+
+const CONFIG_KEY = "estimateConfig";
+
+export async function getSettings(): Promise<EstimateConfig> {
+  const { Settings } = await backend().readMany(["Settings"]);
+  const row = Settings.rows.find((r) => str(r.key) === CONFIG_KEY);
+  return parseConfig(row ? parseJson(row.value) : null);
+}
+
+const VERDICTS: Verdict[] = ["ok", "permit", "ng"];
+const GROUPS: PriceGroup[] = ["base", "option", "flow"];
+const cleanId = (v: unknown) => cleanText(v, 40).replace(/[^\w-]/g, "");
+const cleanNum = (v: unknown, min: number, max: number) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : min;
+};
+const list = (v: unknown, max: number): Record<string, unknown>[] =>
+  Array.isArray(v) ? v.slice(0, max).filter((x) => x && typeof x === "object") : [];
+
+function cleanConfig(input: Record<string, unknown>): EstimateConfig {
+  const config: EstimateConfig = {
+    companyName: cleanText(input.companyName, 100),
+    companyInfo: cleanText(input.companyInfo, 500),
+    taxRate: cleanNum(input.taxRate, 0, 0.5),
+    salesAdjustPct: cleanNum(input.salesAdjustPct, 0, 100),
+    estimateNotes: cleanText(input.estimateNotes, 2000),
+    contractTerms: cleanText(input.contractTerms, 10000),
+    plans: list(input.plans, 20)
+      .map((p) => ({ id: cleanId(p.id), label: cleanText(p.label, 50), description: cleanText(p.description, 200) }))
+      .filter((p) => p.id && p.label),
+    priceItems: list(input.priceItems, 200)
+      .map((i) => ({
+        id: cleanId(i.id),
+        name: cleanText(i.name, 100),
+        description: cleanText(i.description, 300),
+        unitPrice: Math.round(cleanNum(i.unitPrice, 0, 100_000_000)),
+        unit: cleanText(i.unit, 10) || "式",
+        defaultQty: cleanNum(i.defaultQty, 0, 999),
+        group: GROUPS.includes(i.group as PriceGroup) ? (i.group as PriceGroup) : "option",
+        plan: cleanId(i.plan),
+      }))
+      .filter((i) => i.id && i.name),
+    questions: list(input.questions, 50)
+      .map((q) => ({
+        id: cleanId(q.id),
+        category: (Object.keys(FLOW_CATEGORIES).includes(String(q.category)) ? q.category : "other") as keyof typeof FLOW_CATEGORIES,
+        title: cleanText(q.title, 200),
+        help: cleanText(q.help, 500),
+        branchOnly: q.branchOnly === true,
+        options: list(q.options, 30)
+          .map((o) => ({
+            id: cleanId(o.id),
+            label: cleanText(o.label, 100),
+            description: cleanText(o.description, 300),
+            verdict: VERDICTS.includes(o.verdict as Verdict) ? (o.verdict as Verdict) : "ok",
+            note: cleanText(o.note, 500),
+            addItems: Array.isArray(o.addItems) ? o.addItems.slice(0, 20).map(cleanId).filter(Boolean) : [],
+            next: cleanId(o.next),
+          }))
+          .filter((o) => o.id && o.label),
+      }))
+      .filter((q) => q.id && q.title),
+  };
+  if (config.questions.length === 0) throw new UserError("飛行条件の質問を1つ以上登録してください。");
+  const ids = new Set(config.questions.map((q) => q.id));
+  if (ids.size !== config.questions.length) throw new UserError("質問のIDが重複しています。");
+  for (const q of config.questions) {
+    if (q.options.length === 0) throw new UserError(`「${q.title}」に選択肢を登録してください。`);
+    for (const o of q.options) {
+      if (o.next && o.next !== "end" && !ids.has(o.next)) throw new UserError(`「${o.label}」の次の質問が見つかりません。`);
+    }
+  }
+  return config;
+}
+
+export function saveSettings(input: Record<string, unknown>): Promise<EstimateConfig> {
+  const config = cleanConfig(input);
+  return withLock(async () => {
+    const { Settings } = await backend().readMany(["Settings"]);
+    const row = Settings.rows.find((r) => str(r.key) === CONFIG_KEY);
+    const values = { key: CONFIG_KEY, value: JSON.stringify(config), updatedAt: nowString() };
+    if (row) await backend().updateCells("Settings", row._row, values);
+    else await backend().append("Settings", values);
+    return config;
+  });
+}
+
+// ---------- estimates / contracts ----------
+
+function cleanLines(v: unknown): Line[] {
+  return list(v, 100)
+    .map((l) => ({
+      ...(l.itemId ? { itemId: cleanId(l.itemId) } : {}),
+      name: cleanText(l.name, 200),
+      unitPrice: Math.round(cleanNum(l.unitPrice, 0, 1_000_000_000)),
+      qty: cleanNum(l.qty, 0, 9999),
+      unit: cleanText(l.unit, 10),
+      ...(l.discount ? { discount: true } : {}),
+    }))
+    .filter((l) => l.name);
+}
+
+function cleanAnswers(v: unknown): FlowAnswer[] {
+  return list(v, 50).map((a) => ({
+    questionId: cleanId(a.questionId),
+    optionId: cleanId(a.optionId),
+    category: cleanText(a.category, 20),
+    question: cleanText(a.question, 200),
+    answer: cleanText(a.answer, 100),
+    verdict: VERDICTS.includes(a.verdict as Verdict) ? (a.verdict as Verdict) : "ok",
+    note: cleanText(a.note, 500),
   }));
 }
 
+// Sales accounts may only move catalog prices within the configured range.
+function applyPriceRules(lines: Line[], config: EstimateConfig, user: User): Line[] {
+  const catalog = new Map(config.priceItems.map((i) => [i.id, i]));
+  return lines.map((l) => {
+    const item = l.itemId ? catalog.get(l.itemId) : undefined;
+    if (!item) {
+      const { itemId: _drop, ...rest } = l;
+      void _drop;
+      if (!isAdmin(user) && rest.discount) throw new UserError("値引き行の追加は管理者のみ可能です。");
+      return rest;
+    }
+    const line = { ...l, basePrice: item.unitPrice };
+    if (!isAdmin(user)) {
+      const [min, max] = adjustRange(item.unitPrice, config.salesAdjustPct);
+      if (line.unitPrice < min || line.unitPrice > max) {
+        throw new UserError(`「${item.name}」の単価は ${min.toLocaleString()}〜${max.toLocaleString()} 円の範囲で設定してください。`);
+      }
+      if (line.discount) throw new UserError("値引き行の追加は管理者のみ可能です。");
+    }
+    return line;
+  });
+}
+
+async function loadCustomerRow(customerId: string, user: User) {
+  const { Customers } = await backend().readMany(["Customers"]);
+  const row = Customers.rows.find((r) => str(r.id) === customerId && canAccess(r, user));
+  if (!row) throw new UserError("対象の顧客データが見つかりません。");
+  return row;
+}
+
+const toDetails = (lines: Line[]): EstimateDetail[] =>
+  lines.map((l) => ({ name: l.name, amount: l.unitPrice, qty: l.qty, unit: l.unit, subtotal: (l.discount ? -1 : 1) * Math.round(l.unitPrice * l.qty) }));
+
 export async function saveEstimate(input: Record<string, unknown>, user: User): Promise<Estimate> {
-  const customerId = cleanText(input.customerId, 50);
+  const id = cleanText(input.id, 50);
   const type = cleanText(input.type, 10);
   if (!(ESTIMATE_TYPES as readonly string[]).includes(type)) throw new UserError("見積の種類が正しくありません。");
-  if (type === "本見積" && user.role !== ROLE_ADMIN) throw new UserError("本見積の登録は管理者のみ可能です。");
-  const title = cleanText(input.title) || (type === "仮見積" ? "空撮業務 仮見積もり" : "");
-  if (!title) throw new UserError("件名を入力してください。");
-  await assertCustomer(customerId, user);
-  const estimate: Estimate = {
-    id: newId("E"),
-    customerId,
-    date: cleanDate(input.date),
-    title,
-    amount: cleanAmount(input.amount),
-    type,
-    details: cleanDetails(input.details),
-    createdAt: nowString(),
+  if (type === "本見積" && !isAdmin(user)) throw new UserError("本見積の作成・編集は管理者のみ可能です。");
+  const title = cleanText(input.title) || (type === "仮見積" ? "ドローン業務 仮見積書" : "ドローン業務 御見積書");
+  const raw = (input.data && typeof input.data === "object" ? input.data : {}) as Record<string, unknown>;
+  const config = await getSettings();
+  const lines = applyPriceRules(cleanLines(raw.lines), config, user);
+  if (lines.length === 0) throw new UserError("見積項目を1つ以上入力してください。");
+  const answers = cleanAnswers(raw.answers);
+  const verdict: Verdict = type === "仮見積" ? worstVerdict(answers) : VERDICTS.includes(raw.verdict as Verdict) ? (raw.verdict as Verdict) : "ok";
+  if (type === "仮見積" && verdict === "ng") throw new UserError("飛行不可の条件が含まれるため、仮見積を作成できません。");
+  const data: EstimateData = {
+    answers,
+    verdict,
+    planId: cleanId(raw.planId),
+    lines,
+    location: cleanText(raw.location, 300),
+    workDate: cleanText(raw.workDate, 100),
+    validUntil: cleanText(raw.validUntil, 20),
+    memo: cleanText(raw.memo, 3000),
+    judgeMemo: cleanText(raw.judgeMemo, 3000),
   };
-  await withLock(() => backend().append("Estimates", { ...estimate, details: JSON.stringify(estimate.details) }));
-  return estimate;
+  const amount = sumLines(lines);
+  if (amount < 0) throw new UserError("合計金額がマイナスになっています。");
+  const now = nowString();
+
+  return withLock(async () => {
+    if (id) {
+      const { Estimates } = await backend().readMany(["Estimates"]);
+      const row = Estimates.rows.find((r) => str(r.id) === id);
+      if (!row) throw new UserError("対象の見積が見つかりません。");
+      const current = toEstimate(row);
+      await loadCustomerRow(current.customerId, user);
+      if (current.type !== type) throw new UserError("見積の種類は変更できません。");
+      const date = cleanDate(input.date);
+      await backend().updateCells("Estimates", row._row, { date, title, amount, details: JSON.stringify(toDetails(lines)), data: JSON.stringify(data), updatedAt: now });
+      return { ...current, date, title, amount, details: toDetails(lines), data, updatedAt: now };
+    }
+    const customerId = cleanText(input.customerId, 50);
+    await loadCustomerRow(customerId, user);
+    const estimate: Estimate = {
+      id: newId("E"),
+      customerId,
+      date: cleanDate(input.date),
+      title,
+      amount,
+      type,
+      details: toDetails(lines),
+      sourceId: cleanText(input.sourceId, 50),
+      data,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await backend().append("Estimates", { ...estimate, details: JSON.stringify(estimate.details), data: JSON.stringify(data) });
+    return estimate;
+  });
+}
+
+function cleanContractData(raw: Record<string, unknown>): ContractData {
+  return {
+    lines: cleanLines(raw.lines),
+    paymentDue: cleanText(raw.paymentDue, 20),
+    paymentMethod: cleanText(raw.paymentMethod, 200),
+    workDate: cleanText(raw.workDate, 100),
+    workPlace: cleanText(raw.workPlace, 300),
+    deliverables: cleanText(raw.deliverables, 1000),
+    terms: cleanText(raw.terms, 10000),
+    notes: cleanText(raw.notes, 3000),
+  };
 }
 
 export async function saveContract(input: Record<string, unknown>, user: User): Promise<Contract> {
-  const customerId = cleanText(input.customerId, 50);
-  const title = cleanText(input.title);
-  if (!title) throw new UserError("件名を入力してください。");
-  await assertCustomer(customerId, user);
-  const contract: Contract = {
-    id: newId("K"),
-    customerId,
-    date: cleanDate(input.date),
-    title,
-    amount: cleanAmount(input.amount),
-    createdAt: nowString(),
-  };
-  await withLock(() => backend().append("Contracts", contract));
-  return contract;
+  const id = cleanText(input.id, 50);
+  const title = cleanText(input.title) || "ドローン業務委託契約書";
+  const data = cleanContractData((input.data && typeof input.data === "object" ? input.data : {}) as Record<string, unknown>);
+  if (data.lines.length === 0) throw new UserError("契約項目がありません。");
+  const amount = sumLines(data.lines);
+  if (amount < 0) throw new UserError("契約金額がマイナスになっています。");
+  const confirm = input.confirm === true;
+  if (confirm && !data.paymentDue) throw new UserError("入金期日を入力してください。");
+  const status: ContractStatus = confirm ? "confirmed" : "draft";
+  const now = nowString();
+  const date = cleanDate(input.date);
+
+  return withLock(async () => {
+    let contract: Contract;
+    if (id) {
+      const { Contracts } = await backend().readMany(["Contracts"]);
+      const row = Contracts.rows.find((r) => str(r.id) === id);
+      if (!row) throw new UserError("対象の契約が見つかりません。");
+      const current = toContract(row);
+      await loadCustomerRow(current.customerId, user);
+      if (current.status === "confirmed") throw new UserError("確定済みの契約は編集できません。");
+      contract = { ...current, date, title, amount, data, status, updatedAt: now, confirmedAt: confirm ? now : "" };
+      await backend().updateCells("Contracts", row._row, {
+        date,
+        title,
+        amount,
+        status,
+        data: JSON.stringify(data),
+        updatedAt: now,
+        confirmedAt: contract.confirmedAt,
+      });
+    } else {
+      const customerId = cleanText(input.customerId, 50);
+      await loadCustomerRow(customerId, user);
+      contract = {
+        id: newId("K"),
+        customerId,
+        date,
+        title,
+        amount,
+        estimateId: cleanText(input.estimateId, 50),
+        status,
+        data,
+        createdAt: now,
+        updatedAt: now,
+        confirmedAt: confirm ? now : "",
+      };
+      await backend().append("Contracts", { ...contract, data: JSON.stringify(data) });
+    }
+    if (confirm) {
+      const row = await loadCustomerRow(contract.customerId, user);
+      await backend().updateCells("Customers", row._row, { status: "契約済み", updatedAt: now });
+    }
+    return contract;
+  });
 }

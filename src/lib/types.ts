@@ -1,6 +1,8 @@
 export const ROLE_SALES = 1;
 export const ROLE_ADMIN = 2;
 
+import type { ContractData, EstimateData } from "./estimate";
+
 export type User = { id: string; name: string; role: number; team: string };
 
 export const CUSTOMER_STATUSES = ["提案中", "契約進行中", "契約済み"] as const;
@@ -33,7 +35,11 @@ export type Estimate = {
   amount: number;
   type: string;
   details: EstimateDetail[];
+  /** Source estimate (仮見積 → 本見積). */
+  sourceId: string;
+  data: EstimateData;
   createdAt: string;
+  updatedAt: string;
 };
 
 export type Contract = {
@@ -42,8 +48,15 @@ export type Contract = {
   date: string;
   title: string;
   amount: number;
+  estimateId: string;
+  status: ContractStatus;
+  data: ContractData | null;
   createdAt: string;
+  updatedAt: string;
+  confirmedAt: string;
 };
+
+export type ContractStatus = "draft" | "confirmed";
 
 export type CustomerFields = {
   name: string;

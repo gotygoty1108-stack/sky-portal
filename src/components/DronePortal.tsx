@@ -1,6 +1,6 @@
 "use client";
 
-import { LogOut, PlaneTakeoff, RefreshCw } from "lucide-react";
+import { LogOut, PlaneTakeoff, RefreshCw, Settings } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { byNewest } from "@/lib/format";
@@ -12,28 +12,27 @@ import {
   type CustomerFields,
   type CustomerRecord,
   type Estimate,
-  type EstimateDetail,
   type User,
 } from "@/lib/types";
+import { DEFAULT_CONFIG, parseConfig, type EstimateConfig } from "@/lib/estimate";
+import { AdminSettingsView } from "./AdminSettingsView";
+import { ContractView, type ContractPayload } from "./ContractView";
+import { FinalEstimateView } from "./FinalEstimateView";
+import { ProvisionalEstimateView, type EstimatePayload } from "./ProvisionalEstimateView";
 import { CustomerDetailView } from "./CustomerDetailView";
 import { DashboardView } from "./DashboardView";
-import { EstimateBuilderView } from "./EstimateBuilderView";
-import { CustomerFormModal, DocumentFormModal, RecordFormModal } from "./FormModals";
+import { CustomerFormModal, RecordFormModal } from "./FormModals";
 import { LoginView } from "./LoginView";
 import { InstallButton, OfflineBanner, useOnline, useServiceWorker } from "./pwa";
 import { FullScreenLoader, OverlayLoader } from "./ui";
 
-type View = "dashboard" | "detail" | "estimate";
-type NavState = { view: View; customerId: string | null };
-type ModalState =
-  | { kind: "customer"; editing: Customer | null }
-  | { kind: "record" }
-  | { kind: "finalEstimate" }
-  | { kind: "contract" }
-  | null;
+type View = "dashboard" | "detail" | "provisional" | "final" | "contract" | "admin";
+/** docId: document being edited, sourceId: document a new one is based on. */
+type NavState = { view: View; customerId: string | null; docId?: string | null; sourceId?: string | null };
+type ModalState = { kind: "customer"; editing: Customer | null } | { kind: "record" } | null;
 
-const CACHE_KEY = "sky-portal-cache-v1";
-type Cache = { user: User; customers: Customer[]; savedAt: string };
+const CACHE_KEY = "sky-portal-cache-v2";
+type Cache = { user: User; customers: Customer[]; config?: EstimateConfig; savedAt: string };
 
 function readCache(): Cache | null {
   try {
@@ -44,11 +43,11 @@ function readCache(): Cache | null {
   }
 }
 
-function writeCache(user: User, customers: Customer[]) {
+function writeCache(user: User, customers: Customer[], config: EstimateConfig) {
   try {
     const d = new Date();
     const savedAt = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ user, customers, savedAt } satisfies Cache));
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ user, customers, config, savedAt } satisfies Cache));
   } catch {
     // storage full or unavailable: offline view simply won't be available
   }
@@ -61,6 +60,7 @@ export default function DronePortal() {
   const [booting, setBooting] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [config, setConfig] = useState<EstimateConfig>(DEFAULT_CONFIG);
   const [nav, setNav] = useState<NavState>({ view: "dashboard", customerId: null });
   const [modal, setModal] = useState<ModalState>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -93,15 +93,17 @@ export default function DronePortal() {
 
   const loadData = useCallback(async (u: User) => {
     try {
-      const data = await api<Customer[]>("/api/data");
+      const [data, cfg] = await Promise.all([api<Customer[]>("/api/data"), api<EstimateConfig>("/api/settings")]);
       setCustomers(data);
+      setConfig(parseConfig(cfg));
       setCachedAt(null);
-      writeCache(u, data);
+      writeCache(u, data, parseConfig(cfg));
     } catch (err) {
       const cache = readCache();
       if (err instanceof ApiError && err.status === 401) throw err;
       if (cache && cache.user.id === u.id) {
         setCustomers(cache.customers);
+        setConfig(parseConfig(cache.config));
         setCachedAt(cache.savedAt);
       } else {
         throw err;
@@ -125,6 +127,7 @@ export default function DronePortal() {
         } else if (cache) {
           setUser(cache.user);
           setCustomers(cache.customers);
+          setConfig(parseConfig(cache.config));
           setCachedAt(cache.savedAt);
         } else {
           setLoginError(err instanceof Error ? err.message : "読み込みに失敗しました。");
@@ -147,8 +150,8 @@ export default function DronePortal() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  const navigateTo = (view: View, customerId: string | null = nav.customerId) => {
-    const next = { view, customerId };
+  const navigateTo = (view: View, customerId: string | null = nav.customerId, extra: { docId?: string | null; sourceId?: string | null } = {}) => {
+    const next: NavState = { view, customerId, docId: extra.docId ?? null, sourceId: extra.sourceId ?? null };
     if (view === "dashboard") {
       history.replaceState({ ...history.state, ...next }, "");
     } else {
@@ -166,8 +169,8 @@ export default function DronePortal() {
   const updateCustomer = (id: string, fn: (c: Customer) => Customer) => setCustomers((prev) => prev.map((c) => (c.id === id ? fn(c) : c)));
 
   useEffect(() => {
-    if (user && !cachedAt) writeCache(user, customers);
-  }, [user, customers, cachedAt]);
+    if (user && !cachedAt) writeCache(user, customers, config);
+  }, [user, customers, config, cachedAt]);
 
   const handleLogin = async (userId: string, password: string) => {
     setBusy("ログイン中...");
@@ -220,14 +223,42 @@ export default function DronePortal() {
     }
   };
 
-  const handleSaveEstimate = async (data: { customerId: string; title: string; amount: number; type: "仮見積" | "本見積"; details: EstimateDetail[]; date?: string }) => {
+  const upsert = <T extends { id: string; date: string; createdAt: string }>(list: T[], item: T) => (list.some((x) => x.id === item.id) ? list.map((x) => (x.id === item.id ? item : x)) : [item, ...list]).sort(byNewest);
+
+  const handleSaveEstimate = async (payload: EstimatePayload) => {
     try {
-      const est = await api<Estimate>("/api/estimates", { body: data });
-      updateCustomer(est.customerId, (c) => ({ ...c, estimates: [est, ...c.estimates].sort(byNewest) }));
+      const est = await api<Estimate>("/api/estimates", { body: payload });
+      updateCustomer(est.customerId, (c) => ({ ...c, estimates: upsert(c.estimates, est) }));
       return est;
     } catch (err) {
       handleError(err, "保存に失敗しました");
       return null;
+    }
+  };
+
+  const handleSaveContract = async (payload: ContractPayload) => {
+    try {
+      const con = await api<Contract>("/api/contracts", { body: payload });
+      updateCustomer(con.customerId, (c) => ({
+        ...c,
+        status: con.status === "confirmed" ? "契約済み" : c.status,
+        contracts: upsert(c.contracts, con),
+      }));
+      return con;
+    } catch (err) {
+      handleError(err, "保存に失敗しました");
+      return null;
+    }
+  };
+
+  const handleSaveSettings = async (next: EstimateConfig) => {
+    try {
+      const saved = await api<EstimateConfig>("/api/settings", { body: next });
+      setConfig(parseConfig(saved));
+      return true;
+    } catch (err) {
+      handleError(err, "設定の保存に失敗しました");
+      return false;
     }
   };
 
@@ -236,17 +267,6 @@ export default function DronePortal() {
     try {
       const rec = await api<CustomerRecord>("/api/records", { body: { ...data, customerId: selected.id } });
       updateCustomer(rec.customerId, (c) => ({ ...c, records: [rec, ...c.records].sort(byNewest) }));
-      setModal(null);
-    } catch (err) {
-      handleError(err, "保存に失敗しました");
-    }
-  };
-
-  const handleAddContract = async (data: { date: string; title: string; amount: number }) => {
-    if (!selected) return;
-    try {
-      const con = await api<Contract>("/api/contracts", { body: { ...data, customerId: selected.id } });
-      updateCustomer(con.customerId, (c) => ({ ...c, contracts: [con, ...c.contracts].sort(byNewest) }));
       setModal(null);
     } catch (err) {
       handleError(err, "保存に失敗しました");
@@ -264,7 +284,9 @@ export default function DronePortal() {
     );
   }
 
-  const view = nav.view !== "dashboard" && !selected ? "dashboard" : nav.view;
+  const isAdmin = user.role === ROLE_ADMIN;
+  const view = nav.view === "admin" ? (isAdmin ? "admin" : "dashboard") : nav.view !== "dashboard" && !selected ? "dashboard" : nav.view;
+  const findEstimate = (id: string | null | undefined) => (id && selected?.estimates.find((e) => e.id === id)) || null;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -281,6 +303,17 @@ export default function DronePortal() {
 
           <div className="flex items-center gap-3 sm:gap-6">
             <InstallButton />
+            {isAdmin && (
+              <button
+                onClick={() => navigateTo("admin", null)}
+                className="flex items-center gap-1.5 text-sm font-medium text-purple-600 hover:text-purple-800 transition-colors"
+                aria-label="管理者設定"
+                title="管理者設定（仮見積システム）"
+              >
+                <Settings className="w-4 h-4" />
+                <span className="hidden md:inline">管理者設定</span>
+              </button>
+            )}
             <button
               onClick={handleRefresh}
               disabled={!online}
@@ -322,29 +355,56 @@ export default function DronePortal() {
             user={user}
             customer={selected}
             readOnly={readOnly}
+            config={config}
             onBack={() => goBack("dashboard")}
-            onCreateEstimate={() => navigateTo("estimate", selected.id)}
             onEditCustomer={() => setModal({ kind: "customer", editing: selected })}
             onAddRecord={() => setModal({ kind: "record" })}
-            onAddFinalEstimate={() => setModal({ kind: "finalEstimate" })}
-            onAddContract={() => setModal({ kind: "contract" })}
+            onOpenProvisional={(id) => navigateTo("provisional", selected.id, { docId: id })}
+            onOpenFinal={(t) => navigateTo("final", selected.id, { docId: t.id, sourceId: t.sourceId })}
+            onOpenContract={(t) => navigateTo("contract", selected.id, { docId: t.id, sourceId: t.sourceId })}
           />
         )}
 
-        {view === "estimate" && selected && (
-          <EstimateBuilderView
+        {view === "provisional" && selected && (
+          <ProvisionalEstimateView
+            key={nav.docId || "new"}
+            user={user}
             customer={selected}
+            config={config}
+            initial={findEstimate(nav.docId)}
             readOnly={readOnly}
             onBack={() => goBack("detail")}
-            onSave={async (data) => {
-              const est = await handleSaveEstimate(data);
-              if (est) {
-                alert("仮見積もりを保存しました。");
-                goBack("detail");
-              }
-            }}
+            onSave={handleSaveEstimate}
           />
         )}
+
+        {view === "final" && selected && isAdmin && (
+          <FinalEstimateView
+            key={nav.docId || nav.sourceId || "new"}
+            customer={selected}
+            config={config}
+            initial={findEstimate(nav.docId)}
+            source={findEstimate(nav.sourceId)}
+            readOnly={readOnly}
+            onBack={() => goBack("detail")}
+            onSave={handleSaveEstimate}
+          />
+        )}
+
+        {view === "contract" && selected && isAdmin && (
+          <ContractView
+            key={nav.docId || nav.sourceId || "new"}
+            customer={selected}
+            config={config}
+            initial={(nav.docId && selected.contracts.find((c) => c.id === nav.docId)) || null}
+            source={findEstimate(nav.sourceId)}
+            readOnly={readOnly}
+            onBack={() => goBack("detail")}
+            onSave={handleSaveContract}
+          />
+        )}
+
+        {view === "admin" && <AdminSettingsView key={JSON.stringify(config).length} config={config} readOnly={readOnly} onBack={() => goBack("dashboard")} onSave={handleSaveSettings} />}
       </main>
 
       {modal?.kind === "customer" && <CustomerFormModal
@@ -353,17 +413,6 @@ export default function DronePortal() {
           teams={[...new Set(customers.map((c) => c.team).filter(Boolean))].sort()}
           onClose={() => setModal(null)} onSave={handleSaveCustomer} />}
       {modal?.kind === "record" && <RecordFormModal onClose={() => setModal(null)} onSave={handleAddRecord} />}
-      {modal?.kind === "finalEstimate" && selected && (
-        <DocumentFormModal
-          kind="estimate"
-          onClose={() => setModal(null)}
-          onSave={async (d) => {
-            const est = await handleSaveEstimate({ customerId: selected.id, type: "本見積", details: [], ...d });
-            if (est) setModal(null);
-          }}
-        />
-      )}
-      {modal?.kind === "contract" && <DocumentFormModal kind="contract" onClose={() => setModal(null)} onSave={handleAddContract} />}
     </div>
   );
 }
