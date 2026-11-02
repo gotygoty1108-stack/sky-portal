@@ -21,7 +21,7 @@ export function DashboardView({
   const [searchTerm, setSearchTerm] = useState("");
   const q = searchTerm.trim().toLowerCase();
   const filtered = q
-    ? customers.filter((c) => [c.name, c.kana, c.contactPerson, c.id].some((v) => v && v.toLowerCase().includes(q)))
+    ? customers.filter((c) => [c.name, c.kana, c.contactPerson, c.id, c.team].some((v) => v && v.toLowerCase().includes(q)))
     : customers;
 
   return (
@@ -59,7 +59,10 @@ export function DashboardView({
             <div className="p-5">
               <div className="flex justify-between items-start mb-3">
                 <Badge type={statusBadgeType(customer.status)}>{customer.status || "未設定"}</Badge>
-                <span className="text-xs text-slate-400 font-mono">{customer.id}</span>
+                <span className="text-xs text-slate-400 font-mono">
+                  {customer.team && <span className="mr-2 font-sans">team: {customer.team}</span>}
+                  {customer.id}
+                </span>
               </div>
               <h3 className="text-lg font-bold text-slate-800 mb-1 group-hover:text-blue-700 transition-colors break-all">{customer.name}</h3>
               <div className="space-y-1.5 mt-3">

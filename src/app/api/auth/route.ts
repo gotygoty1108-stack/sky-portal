@@ -3,6 +3,7 @@ import { login } from "@/server/portal";
 import { clearLoginFailures, isLoginLocked, recordLoginFailure } from "@/server/login-limit";
 import { createSessionToken, currentUser, SESSION_COOKIE, sessionCookieOptions } from "@/server/session";
 import { fail, ok } from "@/server/route-helpers";
+import { SetupError } from "@/server/backend";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,7 @@ export async function POST(req: Request) {
     return res;
   } catch (e) {
     console.error(e);
+    if (e instanceof SetupError) return fail(e.message, 500);
     return fail("サーバーでエラーが発生しました。時間をおいて再度お試しください。", 500);
   }
 }

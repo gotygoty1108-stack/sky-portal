@@ -1,7 +1,7 @@
 export const ROLE_SALES = 1;
 export const ROLE_ADMIN = 2;
 
-export type User = { id: string; name: string; role: number };
+export type User = { id: string; name: string; role: number; team: string };
 
 export const CUSTOMER_STATUSES = ["提案中", "契約進行中", "契約済み"] as const;
 export const ESTIMATE_TYPES = ["仮見積", "本見積"] as const;
@@ -53,6 +53,7 @@ export type CustomerFields = {
   phone: string;
   address: string;
   status: string;
+  team: string;
 };
 
 export type CustomerBase = CustomerFields & {

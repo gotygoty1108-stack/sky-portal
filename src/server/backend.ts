@@ -7,14 +7,17 @@ export type Row = Record<string, Cell> & { _row: number };
 export type Table = { headers: string[]; rows: Row[] };
 
 export const SHEET_HEADERS = {
-  Accounts: ["id", "password", "name", "role"],
-  Customers: ["id", "name", "kana", "contactPerson", "email", "phone", "address", "status", "createdAt", "updatedAt"],
+  Accounts: ["id", "password", "team", "name", "role"],
+  Customers: ["id", "name", "kana", "contactPerson", "email", "phone", "address", "status", "createdAt", "updatedAt", "team"],
   Records: ["id", "customerId", "date", "title", "content", "createdAt"],
   Estimates: ["id", "customerId", "date", "title", "amount", "type", "details", "createdAt"],
   Contracts: ["id", "customerId", "date", "title", "amount", "createdAt"],
 } as const;
 
 export type SheetName = keyof typeof SHEET_HEADERS;
+
+// Misconfiguration of the spreadsheet; the message is shown to the user as-is.
+export class SetupError extends Error {}
 
 export interface Backend {
   readMany(names: SheetName[]): Promise<Record<string, Table>>;
@@ -89,6 +92,10 @@ class SheetsBackend implements Backend {
         cache: "no-store",
       });
       if (res.ok) return (await res.json()) as T;
+      if (res.status === 403) {
+        throw new SetupError("スプレッドシートを編集する権限がありません。サービスアカウントのメールアドレスを「編集者」として共有してください。");
+      }
+      if (res.status === 404) throw new SetupError("スプレッドシートが見つかりません。SPREADSHEET_ID を確認してください。");
       const retryable = res.status === 429 || res.status >= 500;
       if (!retryable || attempt >= 4) throw new Error(`Sheets API ${res.status}: ${await res.text()}`);
       await res.body?.cancel();
@@ -137,11 +144,34 @@ class SheetsBackend implements Backend {
     names.forEach((n) => params.append("ranges", quote(n)));
     const data = await this.api<{ valueRanges: { values?: Cell[][] }[] }>(`/values:batchGet?${params}`);
     const out: Record<string, Table> = {};
-    names.forEach((n, i) => {
-      out[n] = toTable(data.valueRanges[i]?.values || []);
-      this.headerCache.set(n, out[n].headers);
-    });
+    for (const [i, n] of names.entries()) {
+      const table = toTable(data.valueRanges[i]?.values || []);
+      table.headers = await this.ensureHeaders(n, table.headers);
+      out[n] = table;
+      this.headerCache.set(n, table.headers);
+    }
     return out;
+  }
+
+  // Sheets created by hand may have an empty first row or lack newer columns (e.g. team).
+  // Without the header row, values could not be mapped to columns and appends would write blank rows.
+  private async ensureHeaders(name: SheetName, headers: string[]): Promise<string[]> {
+    const expected: readonly string[] = SHEET_HEADERS[name];
+    const used = headers.filter(Boolean);
+    if (used.length > 0 && !used.includes("id")) {
+      throw new SetupError(`「${name}」シートの1行目に見出し（${expected.join(", ")}）がありません。1行目に見出しを入力してください。`);
+    }
+    const missing = expected.filter((h) => !used.includes(h));
+    if (missing.length === 0) return headers;
+    const start = used.length === 0 ? 0 : headers.length;
+    await this.api("/values:batchUpdate", {
+      method: "POST",
+      body: JSON.stringify({
+        valueInputOption: "RAW",
+        data: [{ range: `${quote(name)}!${colLetter(start)}1`, values: [missing] }],
+      }),
+    });
+    return [...headers.slice(0, start), ...missing];
   }
 
   private async headers(name: SheetName): Promise<string[]> {
@@ -181,10 +211,10 @@ const MOCK_FILE = path.join(process.cwd(), ".data", "mock-db.json");
 
 function mockSeed(): Record<string, Cell[][]> {
   return {
-    Accounts: [[...SHEET_HEADERS.Accounts], ["admin", "admin123", "システム管理者", 2], ["sales", "sales123", "営業担当者", 1]],
+    Accounts: [[...SHEET_HEADERS.Accounts], ["admin", "admin123", "", "システム管理者", 2], ["sales", "sales123", "A", "営業担当者", 1], ["sales2", "sales123", "B", "営業担当者B", 1]],
     Customers: [
       [...SHEET_HEADERS.Customers],
-      ["C-001", "モック株式会社", "モックカブシキガイシャ", "テスト 太郎", "test@example.com", "03-1234-5678", "東京都新宿区", "提案中", "2026/10/01 10:00", "2026/10/01 10:00"],
+      ["C-001", "モック株式会社", "モックカブシキガイシャ", "テスト 太郎", "test@example.com", "03-1234-5678", "東京都新宿区", "提案中", "2026/10/01 10:00", "2026/10/01 10:00", "A"],
     ],
     Records: [[...SHEET_HEADERS.Records], ["R-1", "C-001", "2026/10/05", "初回打ち合わせ", "空撮の要望をヒアリング。", "2026/10/05 15:00"]],
     Estimates: [[...SHEET_HEADERS.Estimates]],
