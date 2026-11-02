@@ -10,8 +10,9 @@ export const SHEET_HEADERS = {
   Accounts: ["id", "password", "team", "name", "role"],
   Customers: ["id", "name", "kana", "contactPerson", "email", "phone", "address", "status", "createdAt", "updatedAt", "team"],
   Records: ["id", "customerId", "date", "title", "content", "createdAt"],
-  Estimates: ["id", "customerId", "date", "title", "amount", "type", "details", "createdAt"],
-  Contracts: ["id", "customerId", "date", "title", "amount", "createdAt"],
+  Estimates: ["id", "customerId", "date", "title", "amount", "type", "details", "createdAt", "sourceId", "data", "updatedAt"],
+  Contracts: ["id", "customerId", "date", "title", "amount", "createdAt", "estimateId", "status", "data", "updatedAt", "confirmedAt"],
+  Settings: ["key", "value", "updatedAt"],
 } as const;
 
 export type SheetName = keyof typeof SHEET_HEADERS;
@@ -219,6 +220,7 @@ function mockSeed(): Record<string, Cell[][]> {
     Records: [[...SHEET_HEADERS.Records], ["R-1", "C-001", "2026/10/05", "初回打ち合わせ", "空撮の要望をヒアリング。", "2026/10/05 15:00"]],
     Estimates: [[...SHEET_HEADERS.Estimates]],
     Contracts: [[...SHEET_HEADERS.Contracts]],
+    Settings: [[...SHEET_HEADERS.Settings]],
   };
 }
 

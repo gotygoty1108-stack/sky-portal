@@ -1,6 +1,6 @@
 "use client";
 
-import { Edit, FileCheck, FileText, PlusCircle, Save } from "lucide-react";
+import { Edit, FileText, PlusCircle, Save } from "lucide-react";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { todayInput } from "@/lib/format";
 import { CUSTOMER_STATUSES, type Customer, type CustomerFields } from "@/lib/types";
@@ -161,70 +161,6 @@ export function RecordFormModal({ onClose, onSave }: { onClose: () => void; onSa
         </div>
         <Field label="内容">
           <textarea rows={6} value={content} onChange={(e) => setContent(e.target.value)} className={inputClass} placeholder="作業内容、飛行時間、特記事項など" />
-        </Field>
-      </form>
-    </Modal>
-  );
-}
-
-export function DocumentFormModal({
-  kind,
-  onClose,
-  onSave,
-}: {
-  kind: "estimate" | "contract";
-  onClose: () => void;
-  onSave: (data: { date: string; title: string; amount: number }) => Promise<void>;
-}) {
-  const [date, setDate] = useState(todayInput);
-  const [title, setTitle] = useState(kind === "estimate" ? "空撮業務 本見積" : "空撮業務 契約");
-  const [amount, setAmount] = useState("");
-  const { saving, submit } = useSubmit(onSave);
-  const label = kind === "estimate" ? "本見積" : "契約";
-
-  return (
-    <Modal
-      title={`${label}の登録`}
-      icon={kind === "estimate" ? FileText : FileCheck}
-      onClose={onClose}
-      disabled={saving}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
-            キャンセル
-          </Button>
-          <Button type="submit" form="document-form" loading={saving} icon={Save}>
-            登録する
-          </Button>
-        </>
-      }
-    >
-      <form
-        id="document-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit({ date, title, amount: Number(amount) });
-        }}
-        className="grid grid-cols-1 md:grid-cols-2 gap-6"
-      >
-        <Field label="件名" required className="md:col-span-2">
-          <input required value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} />
-        </Field>
-        <Field label="日付" required>
-          <input required type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
-        </Field>
-        <Field label={kind === "estimate" ? "金額（税抜・円）" : "契約金額（円）"} required>
-          <input
-            required
-            type="number"
-            inputMode="numeric"
-            min={0}
-            step={1}
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className={inputClass}
-            placeholder="例: 120000"
-          />
         </Field>
       </form>
     </Modal>

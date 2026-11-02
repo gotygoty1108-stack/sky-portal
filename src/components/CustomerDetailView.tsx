@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowLeft, Calculator, Calendar, ChevronDown, FileCheck, FileText, Info, Mail, MapPin, Phone, Plus, Settings, User as UserIcon } from "lucide-react";
+import { ArrowLeft, Calculator, Calendar, Eye, FileCheck, FileText, Info, Mail, MapPin, Pencil, Phone, Plus, Settings, User as UserIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { formatDate, yen } from "@/lib/format";
-import { withTax } from "@/lib/pricing";
-import { ROLE_ADMIN, type Customer, type Estimate, type User } from "@/lib/types";
+import { withTax, type ContractData, type EstimateConfig } from "@/lib/estimate";
+import { ROLE_ADMIN, type Contract, type Customer, type Estimate, type User } from "@/lib/types";
+import { DocumentPreview, VerdictBadge, type PrintDoc } from "./estimate-ui";
 import { Badge, Button, Card, statusBadgeType } from "./ui";
 
 type Tab = "info" | "records" | "documents";
@@ -26,54 +27,71 @@ function InfoItem({ label, icon, children, wide }: { label: string; icon: ReactN
   );
 }
 
-function EstimateCard({ est }: { est: Estimate }) {
-  const [open, setOpen] = useState(false);
-  const hasDetails = est.details.length > 0;
-  const { tax, total } = withTax(est.amount);
+function contractDoc(c: Contract): PrintDoc {
+  const data: ContractData = c.data || {
+    lines: [{ name: c.title, unitPrice: c.amount, qty: 1, unit: "式" }],
+    paymentDue: "",
+    paymentMethod: "",
+    workDate: "",
+    workPlace: "",
+    deliverables: "",
+    terms: "",
+    notes: "",
+  };
+  return { kind: "contract", docNo: c.id, date: c.date, title: c.title, data, confirmed: c.status === "confirmed", confirmedAt: c.confirmedAt };
+}
+
+function estimateDoc(e: Estimate): PrintDoc {
+  return { kind: e.type === "本見積" ? "final" : "provisional", docNo: e.id, date: e.date, title: e.title, data: e.data };
+}
+
+function SmallAction({ onClick, children, disabled, color = "text-blue-600" }: { onClick: () => void; children: ReactNode; disabled?: boolean; color?: string }) {
   return (
-    <Card className="p-4 hover:border-blue-300 group" onClick={hasDetails ? () => setOpen((v) => !v) : undefined}>
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className={`text-xs font-bold ${color} hover:underline disabled:opacity-40 disabled:no-underline flex items-center gap-1`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function EstimateCard({
+  est,
+  taxRate,
+  actions,
+}: {
+  est: Estimate;
+  taxRate: number;
+  actions: ReactNode;
+}) {
+  const { total } = withTax(est.amount, taxRate);
+  return (
+    <Card className={`p-4 ${est.type === "本見積" ? "border-l-4 border-l-blue-500" : ""}`}>
       <div className="flex justify-between items-start gap-2 mb-2">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <Badge type={est.type === "本見積" ? "primary" : "default"}>{est.type || "見積"}</Badge>
-          <span className="font-bold text-slate-800 group-hover:text-blue-700 transition-colors truncate">{est.title}</span>
+          {est.data.verdict && <VerdictBadge verdict={est.data.verdict} />}
+          <span className="font-bold text-slate-800 truncate">{est.title}</span>
         </div>
-        {hasDetails && <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />}
       </div>
       <div className="flex justify-between items-end mt-2">
         <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
           <Calendar className="w-3 h-3" />
-          {formatDate(est.date)}
+          {formatDate(est.date)}・{est.id}
         </span>
         <span className="font-bold text-slate-800 text-lg">
-          {yen(est.amount)}
-          <span className="text-xs text-slate-400 font-normal ml-1">(税抜)</span>
+          {yen(total)}
+          <span className="text-xs text-slate-400 font-normal ml-1">(税込)</span>
         </span>
       </div>
-      {open && (
-        <div className="mt-3 pt-3 border-t border-slate-100 text-sm">
-          <table className="w-full">
-            <tbody className="divide-y divide-slate-100">
-              {est.details.map((d, i) => (
-                <tr key={i}>
-                  <td className="py-1.5 pr-2 text-slate-700">{d.name}</td>
-                  <td className="py-1.5 text-right text-slate-500 whitespace-nowrap">
-                    {d.qty} {d.unit}
-                  </td>
-                  <td className="py-1.5 pl-2 text-right font-medium whitespace-nowrap">{d.subtotal > 0 ? yen(d.subtotal) : "要見積"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="flex justify-between mt-2 text-slate-500">
-            <span>消費税(10%)</span>
-            <span>{yen(tax)}</span>
-          </div>
-          <div className="flex justify-between font-bold text-slate-800">
-            <span>税込合計</span>
-            <span>{yen(total)}</span>
-          </div>
-        </div>
-      )}
+      {est.sourceId && <div className="text-[11px] text-slate-400 mt-1">元の仮見積：{est.sourceId}</div>}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 pt-3 border-t border-slate-100">{actions}</div>
     </Card>
   );
 }
@@ -82,24 +100,27 @@ export function CustomerDetailView({
   user,
   customer,
   readOnly,
+  config,
   onBack,
-  onCreateEstimate,
   onEditCustomer,
   onAddRecord,
-  onAddFinalEstimate,
-  onAddContract,
+  onOpenProvisional,
+  onOpenFinal,
+  onOpenContract,
 }: {
   user: User;
   customer: Customer;
   readOnly: boolean;
+  config: EstimateConfig;
   onBack: () => void;
-  onCreateEstimate: () => void;
   onEditCustomer: () => void;
   onAddRecord: () => void;
-  onAddFinalEstimate: () => void;
-  onAddContract: () => void;
+  onOpenProvisional: (id: string | null) => void;
+  onOpenFinal: (target: { id?: string; sourceId?: string }) => void;
+  onOpenContract: (target: { id?: string; sourceId?: string }) => void;
 }) {
   const [activeTab, setActiveTab] = useState<Tab>("info");
+  const [printing, setPrinting] = useState<PrintDoc | null>(null);
   const isAdmin = user.role === ROLE_ADMIN;
 
   return (
@@ -120,7 +141,7 @@ export function CustomerDetailView({
           <Button variant="secondary" icon={Settings} onClick={onEditCustomer} disabled={readOnly}>
             編集
           </Button>
-          <Button icon={Calculator} onClick={onCreateEstimate} disabled={readOnly}>
+          <Button icon={Calculator} onClick={() => onOpenProvisional(null)} disabled={readOnly}>
             仮見積もり作成
           </Button>
         </div>
@@ -216,8 +237,8 @@ export function CustomerDetailView({
                   <FileText className="w-5 h-5 text-blue-500" /> 見積履歴
                 </h3>
                 {isAdmin && (
-                  <Button variant="ghost" className="text-blue-600 !px-2 !py-1" onClick={onAddFinalEstimate} disabled={readOnly}>
-                    ＋ 本見積登録
+                  <Button variant="ghost" className="text-blue-600 !px-2 !py-1" onClick={() => onOpenFinal({})} disabled={readOnly}>
+                    ＋ 本見積（白紙から）
                   </Button>
                 )}
               </div>
@@ -227,7 +248,38 @@ export function CustomerDetailView({
                     <p className="text-slate-500 text-sm">見積履歴はありません。</p>
                   </div>
                 ) : (
-                  customer.estimates.map((est) => <EstimateCard key={est.id} est={est} />)
+                  customer.estimates.map((est) => (
+                    <EstimateCard
+                      key={est.id}
+                      est={est}
+                      taxRate={config.taxRate}
+                      actions={
+                        <>
+                          <SmallAction onClick={() => setPrinting(estimateDoc(est))}>
+                            <Eye className="w-3.5 h-3.5" /> {est.type === "本見積" ? "見積書" : "お客様用"}表示・印刷
+                          </SmallAction>
+                          {(est.type !== "本見積" || isAdmin) && (
+                            <SmallAction
+                              disabled={readOnly}
+                              onClick={() => (est.type === "本見積" ? onOpenFinal({ id: est.id }) : onOpenProvisional(est.id))}
+                            >
+                              <Pencil className="w-3.5 h-3.5" /> 編集
+                            </SmallAction>
+                          )}
+                          {isAdmin && est.type === "仮見積" && (
+                            <SmallAction disabled={readOnly} onClick={() => onOpenFinal({ sourceId: est.id })} color="text-indigo-600">
+                              <FileText className="w-3.5 h-3.5" /> この仮見積から本見積を作成
+                            </SmallAction>
+                          )}
+                          {isAdmin && est.type === "本見積" && (
+                            <SmallAction disabled={readOnly} onClick={() => onOpenContract({ sourceId: est.id })} color="text-emerald-600">
+                              <FileCheck className="w-3.5 h-3.5" /> この本見積で契約を作成
+                            </SmallAction>
+                          )}
+                        </>
+                      }
+                    />
+                  ))
                 )}
               </div>
             </div>
@@ -237,27 +289,40 @@ export function CustomerDetailView({
                 <h3 className="font-bold text-slate-800 flex items-center gap-2">
                   <FileCheck className="w-5 h-5 text-emerald-500" /> 契約履歴
                 </h3>
-                {isAdmin && (
-                  <Button variant="ghost" className="text-emerald-600 !px-2 !py-1" onClick={onAddContract} disabled={readOnly}>
-                    ＋ 契約登録
-                  </Button>
-                )}
               </div>
               <div className="space-y-3">
                 {customer.contracts.length === 0 ? (
                   <div className="text-center p-6 bg-slate-50 rounded-lg border border-dashed border-slate-200">
                     <p className="text-slate-500 text-sm">契約履歴はありません。</p>
+                    <p className="text-slate-400 text-xs mt-1">契約は本見積の「この本見積で契約を作成」から作成します。</p>
                   </div>
                 ) : (
                   customer.contracts.map((contract) => (
-                    <Card key={contract.id} className="p-4 bg-emerald-50/30 border-emerald-100 hover:border-emerald-300">
-                      <div className="font-bold text-slate-800 mb-2 break-all">{contract.title}</div>
+                    <Card key={contract.id} className="p-4 bg-emerald-50/30 border-emerald-100">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <Badge type={contract.status === "confirmed" ? "success" : "warning"}>{contract.status === "confirmed" ? "契約確定" : "下書き"}</Badge>
+                        <span className="font-bold text-slate-800 break-all">{contract.title}</span>
+                      </div>
                       <div className="flex justify-between items-end mt-2">
                         <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
                           <Calendar className="w-3 h-3" />
-                          {formatDate(contract.date)}
+                          {formatDate(contract.date)}・{contract.id}
                         </span>
-                        <span className="font-bold text-emerald-700 text-lg">{yen(contract.amount)}</span>
+                        <span className="font-bold text-emerald-700 text-lg">
+                          {yen(withTax(contract.amount, config.taxRate).total)}
+                          <span className="text-xs text-slate-400 font-normal ml-1">(税込)</span>
+                        </span>
+                      </div>
+                      {contract.data?.paymentDue && <div className="text-xs text-slate-500 mt-1">入金期日：{formatDate(contract.data.paymentDue)}</div>}
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 pt-3 border-t border-emerald-100">
+                        <SmallAction onClick={() => setPrinting(contractDoc(contract))} color="text-emerald-700">
+                          <Eye className="w-3.5 h-3.5" /> 契約書を表示・印刷
+                        </SmallAction>
+                        {isAdmin && (
+                          <SmallAction onClick={() => onOpenContract({ id: contract.id })} color="text-emerald-700" disabled={readOnly && contract.status !== "confirmed"}>
+                            <Pencil className="w-3.5 h-3.5" /> {contract.status === "confirmed" ? "詳細" : "編集・契約確定"}
+                          </SmallAction>
+                        )}
                       </div>
                     </Card>
                   ))
@@ -267,6 +332,9 @@ export function CustomerDetailView({
           </div>
         )}
       </div>
+
+      {printing && <DocumentPreview doc={printing} customer={customer} config={config} onClose={() => setPrinting(null)} />}
+      {printing && <DocumentPreview doc={printing} customer={customer} config={config} onClose={() => setPrinting(null)} />}
     </div>
   );
 }
