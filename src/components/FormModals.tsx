@@ -3,10 +3,10 @@
 import { Edit, FileText, PlusCircle, Save } from "lucide-react";
 import { useState, type ChangeEvent, type FormEvent } from "react";
 import { todayInput } from "@/lib/format";
-import { CUSTOMER_STATUSES, type Customer, type CustomerFields } from "@/lib/types";
+import { type Customer, type CustomerFields } from "@/lib/types";
 import { Button, Field, inputClass, Modal } from "./ui";
 
-const EMPTY_CUSTOMER: CustomerFields = { name: "", kana: "", contactPerson: "", email: "", phone: "", address: "", status: "提案中", team: "" };
+const EMPTY_CUSTOMER: CustomerFields = { name: "", kana: "", contactPerson: "", email: "", phone: "", address: "", status: "", team: "" };
 
 function useSubmit<T>(onSave: (data: T) => Promise<void>) {
   const [saving, setSaving] = useState(false);
@@ -86,15 +86,6 @@ export function CustomerFormModal({
         </Field>
         <Field label="担当者名" required>
           <input required name="contactPerson" value={formData.contactPerson} onChange={handleChange} className={inputClass} placeholder="例: 山田 太郎" />
-        </Field>
-        <Field label="ステータス">
-          <select name="status" value={formData.status} onChange={handleChange} className={inputClass}>
-            {CUSTOMER_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
         </Field>
         <Field label="電話番号">
           <input type="tel" name="phone" value={formData.phone} onChange={handleChange} className={inputClass} placeholder="例: 03-1234-5678" />

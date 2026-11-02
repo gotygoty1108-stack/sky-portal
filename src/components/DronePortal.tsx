@@ -6,6 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import { byNewest } from "@/lib/format";
 import {
   ROLE_ADMIN,
+  computeStatus,
   type Contract,
   type Customer,
   type CustomerBase,
@@ -174,7 +175,14 @@ export default function DronePortal() {
     else navigateTo(fallback);
   };
 
-  const updateCustomer = (id: string, fn: (c: Customer) => Customer) => setCustomers((prev) => prev.map((c) => (c.id === id ? fn(c) : c)));
+  const updateCustomer = (id: string, fn: (c: Customer) => Customer) =>
+    setCustomers((prev) =>
+      prev.map((c) => {
+        if (c.id !== id) return c;
+        const next = fn(c);
+        return { ...next, status: computeStatus(next) };
+      }),
+    );
 
   useEffect(() => {
     if (user && !cachedAt) writeCache(user, customers, config);
@@ -249,7 +257,6 @@ export default function DronePortal() {
       const con = await api<Contract>("/api/contracts", { body: payload });
       updateCustomer(con.customerId, (c) => ({
         ...c,
-        status: con.status === "confirmed" ? "契約済み" : c.status,
         contracts: upsert(c.contracts, con),
       }));
       return con;
