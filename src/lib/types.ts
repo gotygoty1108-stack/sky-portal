@@ -34,14 +34,46 @@ export type EstimateDetail = {
   subtotal: number;
 };
 
+export type Flight = {
+  date: string;
+  place: string;
+  /** "HH:MM" */
+  startTime: string;
+  endTime: string;
+  minutes: number;
+  content: string;
+};
+
 export type CustomerRecord = {
   id: string;
   customerId: string;
   date: string;
   title: string;
   content: string;
+  /** Contract the record was created from. */
+  contractId: string;
+  flights: Flight[];
   createdAt: string;
+  updatedAt: string;
 };
+
+/** Minutes between two "HH:MM" times (crossing midnight is allowed), or null if either is missing. */
+export function flightMinutes(start: string, end: string): number | null {
+  const p = (t: string) => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(t);
+    return m ? +m[1] * 60 + +m[2] : null;
+  };
+  const s = p(start);
+  const e = p(end);
+  if (s === null || e === null) return null;
+  return (e - s + 1440) % 1440;
+}
+
+export function formatMinutes(total: number): string {
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return h ? `${h}時間${String(m).padStart(2, "0")}分` : `${m}分`;
+}
 
 export type Estimate = {
   id: string;

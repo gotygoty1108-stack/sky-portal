@@ -1,10 +1,10 @@
 "use client";
 
-import { ArrowLeft, Calculator, Calendar, Eye, FileCheck, FileText, Info, Mail, MapPin, Pencil, Phone, Plus, Settings, User as UserIcon } from "lucide-react";
+import { ArrowLeft, Calculator, Calendar, Eye, FileCheck, FileText, Info, Mail, MapPin, Pencil, Phone, Plane, Plus, Settings, User as UserIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { formatDate, yen } from "@/lib/format";
 import { withTax, type ContractData, type EstimateConfig } from "@/lib/estimate";
-import { ROLE_ADMIN, type Contract, type Customer, type Estimate, type User } from "@/lib/types";
+import { formatMinutes, ROLE_ADMIN, type Contract, type Customer, type Estimate, type User } from "@/lib/types";
 import { DocumentPreview, VerdictBadge, type PrintDoc } from "./estimate-ui";
 import { Badge, Button, Card, statusBadgeType } from "./ui";
 
@@ -103,7 +103,7 @@ export function CustomerDetailView({
   config,
   onBack,
   onEditCustomer,
-  onAddRecord,
+  onOpenRecord,
   onOpenProvisional,
   onOpenFinal,
   onOpenContract,
@@ -114,7 +114,7 @@ export function CustomerDetailView({
   config: EstimateConfig;
   onBack: () => void;
   onEditCustomer: () => void;
-  onAddRecord: () => void;
+  onOpenRecord: (target: { id?: string; sourceId?: string }) => void;
   onOpenProvisional: (id: string | null) => void;
   onOpenFinal: (target: { id?: string; sourceId?: string }) => void;
   onOpenContract: (target: { id?: string; sourceId?: string }) => void;
@@ -204,9 +204,12 @@ export function CustomerDetailView({
         {activeTab === "records" && (
           <div className="space-y-4">
             {isAdmin && (
-              <div className="flex justify-end">
-                <Button variant="secondary" icon={Plus} onClick={onAddRecord} disabled={readOnly}>
-                  記録を追加
+              <div className="flex flex-wrap justify-end items-center gap-3">
+                {customer.contracts.some((k) => k.status === "confirmed") && (
+                  <span className="text-xs text-slate-500">確定済み契約の「業務記録を作成」から、契約内容を入れた状態で作成できます。</span>
+                )}
+                <Button variant="secondary" icon={Plus} onClick={() => onOpenRecord({})} disabled={readOnly}>
+                  記録を追加（白紙から）
                 </Button>
               </div>
             )}
@@ -223,6 +226,46 @@ export function CustomerDetailView({
                     <span className="text-sm bg-slate-100 px-2 py-1 rounded text-slate-600 font-mono whitespace-nowrap">{formatDate(record.date)}</span>
                   </div>
                   {record.content && <p className="text-slate-600 text-sm whitespace-pre-wrap leading-relaxed bg-slate-50 p-3 rounded break-all">{record.content}</p>}
+                  {record.flights.length > 0 && (
+                    <div className="mt-3 overflow-x-auto">
+                      <div className="text-xs font-bold text-slate-500 mb-1 flex items-center gap-1">
+                        <Plane className="w-3.5 h-3.5" /> 飛行記録 {record.flights.length}回・合計 {formatMinutes(record.flights.reduce((s, f) => s + (f.minutes || 0), 0))}
+                      </div>
+                      <table className="w-full text-xs min-w-[560px]">
+                        <thead>
+                          <tr className="text-slate-500 border-b border-slate-200">
+                            <th className="text-left py-1">飛行日</th>
+                            <th className="text-left py-1">場所</th>
+                            <th className="text-left py-1">時刻</th>
+                            <th className="text-right py-1">時間</th>
+                            <th className="text-left py-1 pl-3">内容</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {record.flights.map((f, i) => (
+                            <tr key={i}>
+                              <td className="py-1 whitespace-nowrap">{formatDate(f.date)}</td>
+                              <td className="py-1">{f.place}</td>
+                              <td className="py-1 whitespace-nowrap">
+                                {f.startTime}
+                                {f.endTime && `〜${f.endTime}`}
+                              </td>
+                              <td className="py-1 text-right whitespace-nowrap">{formatMinutes(f.minutes || 0)}</td>
+                              <td className="py-1 pl-3 whitespace-pre-wrap">{f.content}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {isAdmin && (
+                    <div className="flex gap-4 mt-3 pt-3 border-t border-slate-100">
+                      <SmallAction disabled={readOnly} onClick={() => onOpenRecord({ id: record.id })}>
+                        <Pencil className="w-3.5 h-3.5" /> 編集・飛行記録の追加
+                      </SmallAction>
+                      {record.contractId && <span className="text-[11px] text-slate-400">元の契約：{record.contractId}</span>}
+                    </div>
+                  )}
                 </Card>
               ))
             )}
@@ -318,6 +361,11 @@ export function CustomerDetailView({
                         <SmallAction onClick={() => setPrinting(contractDoc(contract))} color="text-emerald-700">
                           <Eye className="w-3.5 h-3.5" /> 契約書を表示・印刷
                         </SmallAction>
+                        {isAdmin && contract.status === "confirmed" && (
+                          <SmallAction disabled={readOnly} onClick={() => onOpenRecord({ sourceId: contract.id })} color="text-blue-600">
+                            <Plus className="w-3.5 h-3.5" /> 業務記録を作成
+                          </SmallAction>
+                        )}
                         {isAdmin && (
                           <SmallAction onClick={() => onOpenContract({ id: contract.id })} color="text-emerald-700" disabled={readOnly && contract.status !== "confirmed"}>
                             <Pencil className="w-3.5 h-3.5" /> {contract.status === "confirmed" ? "詳細" : "編集・契約確定"}

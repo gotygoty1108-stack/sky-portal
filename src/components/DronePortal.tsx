@@ -22,15 +22,16 @@ import { FinalEstimateView } from "./FinalEstimateView";
 import { ProvisionalEstimateView, type EstimatePayload } from "./ProvisionalEstimateView";
 import { CustomerDetailView } from "./CustomerDetailView";
 import { DashboardView } from "./DashboardView";
-import { CustomerFormModal, RecordFormModal } from "./FormModals";
+import { CustomerFormModal } from "./FormModals";
+import { RecordView, type RecordPayload } from "./RecordView";
 import { LoginView } from "./LoginView";
 import { InstallButton, OfflineBanner, useOnline, useServiceWorker } from "./pwa";
 import { FullScreenLoader, OverlayLoader } from "./ui";
 
-type View = "dashboard" | "detail" | "provisional" | "final" | "contract" | "admin";
+type View = "dashboard" | "detail" | "provisional" | "final" | "contract" | "record" | "admin";
 /** docId: document being edited, sourceId: document a new one is based on. */
 type NavState = { view: View; customerId: string | null; docId?: string | null; sourceId?: string | null };
-type ModalState = { kind: "customer"; editing: Customer | null } | { kind: "record" } | null;
+type ModalState = { kind: "customer"; editing: Customer | null } | null;
 
 const CACHE_KEY = "sky-portal-cache-v2";
 type Cache = { user: User; customers: Customer[]; config?: EstimateConfig; savedAt: string };
@@ -277,14 +278,14 @@ export default function DronePortal() {
     }
   };
 
-  const handleAddRecord = async (data: { date: string; title: string; content: string }) => {
-    if (!selected) return;
+  const handleSaveRecord = async (payload: RecordPayload) => {
     try {
-      const rec = await api<CustomerRecord>("/api/records", { body: { ...data, customerId: selected.id } });
-      updateCustomer(rec.customerId, (c) => ({ ...c, records: [rec, ...c.records].sort(byNewest) }));
-      setModal(null);
+      const rec = await api<CustomerRecord>("/api/records", { body: payload });
+      updateCustomer(rec.customerId, (c) => ({ ...c, records: upsert(c.records, rec) }));
+      return rec;
     } catch (err) {
       handleError(err, "保存に失敗しました");
+      return null;
     }
   };
 
@@ -373,7 +374,7 @@ export default function DronePortal() {
             config={config}
             onBack={() => goBack("dashboard")}
             onEditCustomer={() => setModal({ kind: "customer", editing: selected })}
-            onAddRecord={() => setModal({ kind: "record" })}
+            onOpenRecord={(t) => navigateTo("record", selected.id, { docId: t.id, sourceId: t.sourceId })}
             onOpenProvisional={(id) => navigateTo("provisional", selected.id, { docId: id })}
             onOpenFinal={(t) => navigateTo("final", selected.id, { docId: t.id, sourceId: t.sourceId })}
             onOpenContract={(t) => navigateTo("contract", selected.id, { docId: t.id, sourceId: t.sourceId })}
@@ -419,6 +420,18 @@ export default function DronePortal() {
           />
         )}
 
+        {view === "record" && selected && isAdmin && (
+          <RecordView
+            key={nav.docId || nav.sourceId || "new"}
+            customer={selected}
+            initial={(nav.docId && selected.records.find((r) => r.id === nav.docId)) || null}
+            source={(nav.sourceId && selected.contracts.find((c) => c.id === nav.sourceId)) || null}
+            readOnly={readOnly}
+            onBack={() => goBack("detail")}
+            onSave={handleSaveRecord}
+          />
+        )}
+
         {view === "admin" && <AdminSettingsView key={JSON.stringify(config).length} config={config} readOnly={readOnly} onBack={() => goBack("dashboard")} onSave={handleSaveSettings} />}
       </main>
 
@@ -427,7 +440,6 @@ export default function DronePortal() {
           isAdmin={user.role === ROLE_ADMIN}
           teams={[...new Set(customers.map((c) => c.team).filter(Boolean))].sort()}
           onClose={() => setModal(null)} onSave={handleSaveCustomer} />}
-      {modal?.kind === "record" && <RecordFormModal onClose={() => setModal(null)} onSave={handleAddRecord} />}
     </div>
   );
 }
