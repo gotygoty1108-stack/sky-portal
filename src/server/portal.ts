@@ -12,6 +12,7 @@ import {
   type CustomerRecord,
   type Estimate,
   type EstimateDetail,
+  type Flight,
   type User,
 } from "@/lib/types";
 import { byNewest } from "@/lib/format";
@@ -141,6 +142,21 @@ function toEstimate(r: Row): Estimate {
   };
 }
 
+function toRecord(r: Row): CustomerRecord {
+  const data = parseJson<{ flights?: Flight[] }>(r.data);
+  return {
+    id: str(r.id),
+    customerId: str(r.customerId),
+    date: str(r.date),
+    title: str(r.title),
+    content: str(r.content),
+    contractId: str(r.contractId),
+    flights: Array.isArray(data?.flights) ? data.flights : [],
+    createdAt: str(r.createdAt),
+    updatedAt: str(r.updatedAt),
+  };
+}
+
 function toContract(r: Row): Contract {
   return {
     id: str(r.id),
@@ -187,16 +203,7 @@ export async function getInitialData(user: User): Promise<Customer[]> {
     return map;
   };
 
-  const records = group<CustomerRecord>(
-    t.Records.rows.map((r) => ({
-      id: str(r.id),
-      customerId: str(r.customerId),
-      date: str(r.date),
-      title: str(r.title),
-      content: str(r.content),
-      createdAt: str(r.createdAt),
-    })),
-  );
+  const records = group<CustomerRecord>(t.Records.rows.filter((r) => str(r.id)).map(toRecord));
   const estimates = group<Estimate>(t.Estimates.rows.filter((r) => str(r.id)).map(toEstimate));
   const contracts = group<Contract>(t.Contracts.rows.filter((r) => str(r.id)).map(toContract));
 
@@ -276,25 +283,60 @@ async function assertCustomer(customerId: string, user: User) {
   if (!Customers.rows.some((r) => str(r.id) === customerId && canAccess(r, user))) throw new UserError("対象の顧客データが見つかりません。");
 }
 
-export async function addRecord(input: Record<string, unknown>, user: User): Promise<CustomerRecord> {
-  const customerId = cleanText(input.customerId, 50);
+function cleanFlights(v: unknown): Flight[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .slice(0, 200)
+    .filter((f) => f && typeof f === "object")
+    .map((f) => {
+      const time = (t: unknown) => (/^\d{1,2}:\d{2}$/.test(cleanText(t, 5)) ? cleanText(t, 5) : "");
+      const minutes = Math.round(Number(f.minutes));
+      return {
+        date: cleanText(f.date, 20),
+        place: cleanText(f.place, 300),
+        startTime: time(f.startTime),
+        endTime: time(f.endTime),
+        minutes: Number.isFinite(minutes) ? Math.min(1440, Math.max(0, minutes)) : 0,
+        content: cleanText(f.content, 2000),
+      };
+    });
+}
+
+export async function saveRecord(input: Record<string, unknown>, user: User): Promise<CustomerRecord> {
+  const id = cleanText(input.id, 50);
   const title = cleanText(input.title);
-  const content = cleanText(input.content, 5000);
+  const content = cleanText(input.content, 10000);
   if (!title) throw new UserError("件名を入力してください。");
-  await assertCustomer(customerId, user);
-  const record: CustomerRecord = {
-    id: newId("R"),
-    customerId,
-    date: cleanDate(input.date),
-    title,
-    content,
-    createdAt: nowString(),
-  };
-  await withLock(async () => {
-    await backend().append("Records", record);
+  const flights = cleanFlights(input.flights);
+  const date = cleanDate(input.date);
+  const now = nowString();
+  return withLock(async () => {
+    if (id) {
+      const { Records } = await backend().readMany(["Records"]);
+      const row = Records.rows.find((r) => str(r.id) === id);
+      if (!row) throw new UserError("対象の記録が見つかりません。");
+      const current = toRecord(row);
+      await assertCustomer(current.customerId, user);
+      await backend().updateCells("Records", row._row, { date, title, content, data: JSON.stringify({ flights }), updatedAt: now });
+      return { ...current, date, title, content, flights, updatedAt: now };
+    }
+    const customerId = cleanText(input.customerId, 50);
+    await assertCustomer(customerId, user);
+    const record: CustomerRecord = {
+      id: newId("R"),
+      customerId,
+      date,
+      title,
+      content,
+      contractId: cleanText(input.contractId, 50),
+      flights,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await backend().append("Records", { ...record, flights: "", data: JSON.stringify({ flights }) });
     await refreshCustomerStatus(customerId);
+    return record;
   });
-  return record;
 }
 
 // ---------- settings ----------

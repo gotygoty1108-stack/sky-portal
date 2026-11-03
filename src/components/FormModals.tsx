@@ -1,8 +1,7 @@
 "use client";
 
-import { Edit, FileText, PlusCircle, Save } from "lucide-react";
+import { Edit, PlusCircle, Save } from "lucide-react";
 import { useState, type ChangeEvent, type FormEvent } from "react";
-import { todayInput } from "@/lib/format";
 import { type Customer, type CustomerFields } from "@/lib/types";
 import { Button, Field, inputClass, Modal } from "./ui";
 
@@ -106,53 +105,6 @@ export function CustomerFormModal({
             </datalist>
           </Field>
         )}
-      </form>
-    </Modal>
-  );
-}
-
-export function RecordFormModal({ onClose, onSave }: { onClose: () => void; onSave: (data: { date: string; title: string; content: string }) => Promise<void> }) {
-  const [date, setDate] = useState(todayInput);
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
-  const { saving, submit } = useSubmit(onSave);
-
-  return (
-    <Modal
-      title="業務請負記録の追加"
-      icon={FileText}
-      onClose={onClose}
-      disabled={saving}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
-            キャンセル
-          </Button>
-          <Button type="submit" form="record-form" loading={saving} icon={Save}>
-            追加する
-          </Button>
-        </>
-      }
-    >
-      <form
-        id="record-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit({ date, title, content });
-        }}
-        className="space-y-6"
-      >
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Field label="日付" required>
-            <input required type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
-          </Field>
-          <Field label="件名" required className="md:col-span-2">
-            <input required value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} placeholder="例: 〇〇工場 空撮業務" />
-          </Field>
-        </div>
-        <Field label="内容">
-          <textarea rows={6} value={content} onChange={(e) => setContent(e.target.value)} className={inputClass} placeholder="作業内容、飛行時間、特記事項など" />
-        </Field>
       </form>
     </Modal>
   );

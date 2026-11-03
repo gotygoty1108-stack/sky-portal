@@ -9,7 +9,7 @@ export type Table = { headers: string[]; rows: Row[] };
 export const SHEET_HEADERS = {
   Accounts: ["id", "password", "team", "name", "role"],
   Customers: ["id", "name", "kana", "contactPerson", "email", "phone", "address", "status", "createdAt", "updatedAt", "team"],
-  Records: ["id", "customerId", "date", "title", "content", "createdAt"],
+  Records: ["id", "customerId", "date", "title", "content", "createdAt", "contractId", "data", "updatedAt"],
   Estimates: ["id", "customerId", "date", "title", "amount", "type", "details", "createdAt", "sourceId", "data", "updatedAt"],
   Contracts: ["id", "customerId", "date", "title", "amount", "createdAt", "estimateId", "status", "data", "updatedAt", "confirmedAt"],
   Settings: ["key", "value", "updatedAt"],
