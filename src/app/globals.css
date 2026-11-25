@@ -32,6 +32,16 @@ body {
   .print-avoid-break {
     break-inside: avoid;
   }
+  .print-keep {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tr {
+    break-inside: avoid;
+  }
   body {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;

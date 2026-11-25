@@ -377,6 +377,7 @@ export function DocumentPreview({ doc, customer, config, onClose }: { doc: Print
           </table>
         )}
 
+        <div className="print-keep">
         <LinesTable lines={lines} />
         <div className="flex justify-end mt-2 mb-5">
           <table className="text-[13px] border-collapse w-64">
@@ -395,6 +396,7 @@ export function DocumentPreview({ doc, customer, config, onClose }: { doc: Print
               </tr>
             </tbody>
           </table>
+        </div>
         </div>
 
         {doc.kind !== "contract" && ((doc.data.answers && doc.data.answers.length > 0) || !!doc.data.flightCategory) && (
@@ -423,7 +425,7 @@ export function DocumentPreview({ doc, customer, config, onClose }: { doc: Print
         )}
 
         {doc.kind === "contract" && (
-          <>
+          <div className="print-keep">
             {doc.data.terms && (
               <div className="mb-5 text-[12px] leading-relaxed">
                 <h2 className="font-bold text-sm border-l-4 border-slate-800 pl-2 mb-2">契約条項</h2>
@@ -450,7 +452,7 @@ export function DocumentPreview({ doc, customer, config, onClose }: { doc: Print
               ))}
             </div>
             {doc.confirmed && <p className="text-right text-[11px] text-slate-500 mt-3">契約確定日時：{doc.confirmedAt}</p>}
-          </>
+          </div>
         )}
 
         {doc.kind !== "contract" && (config.estimateNotes || doc.data.memo) && (
