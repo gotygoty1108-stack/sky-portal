@@ -451,7 +451,7 @@ export function DocumentPreview({ doc, customer, config, onClose }: { doc: Print
                 </div>
               ))}
             </div>
-            {doc.confirmed && <p className="text-right text-[11px] text-slate-500 mt-3">契約確定日時：{doc.confirmedAt}</p>}
+            {doc.confirmed && <p className="text-right text-[11px] text-slate-500 mt-3">発行日時：{doc.confirmedAt}</p>}
           </div>
         )}
 
