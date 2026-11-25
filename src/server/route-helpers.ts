@@ -16,7 +16,13 @@ type Handler = (user: User, body: Record<string, unknown>) => Promise<NextRespon
 
 export function authed(handler: Handler, opts: { role?: number; allowPending?: boolean } = {}) {
   return async (req: Request) => {
-    const user = await currentUser();
+    let user: User | null;
+    try {
+      user = await currentUser();
+    } catch (e) {
+      console.error(e);
+      return fail(e instanceof SetupError ? e.message : "サーバーでエラーが発生しました。時間をおいて再度お試しください。", 500);
+    }
     if (!user) return fail("ログインしてください。", 401);
     if (user.mustSetPassword && !opts.allowPending) return fail("パスワードの本登録を完了してください。", 403);
     if (opts.role !== undefined && user.role !== opts.role) return fail("この操作の権限がありません。", 403);

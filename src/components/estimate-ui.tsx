@@ -397,7 +397,7 @@ export function DocumentPreview({ doc, customer, config, onClose }: { doc: Print
           </table>
         </div>
 
-        {doc.kind !== "contract" && doc.data.answers && doc.data.answers.length > 0 && (
+        {doc.kind !== "contract" && ((doc.data.answers && doc.data.answers.length > 0) || !!doc.data.flightCategory) && (
           <div className="mb-5 print-avoid-break">
             <h2 className="font-bold text-sm border-l-4 border-slate-800 pl-2 mb-2 flex items-center gap-3">
               飛行条件の確認結果 {doc.data.verdict && <VerdictBadge verdict={doc.data.verdict} />}
@@ -405,7 +405,7 @@ export function DocumentPreview({ doc, customer, config, onClose }: { doc: Print
             </h2>
             <table className="w-full text-[12px] border-collapse">
               <tbody>
-                {sortAnswers(doc.data.answers).map((a, i) => (
+                {sortAnswers(doc.data.answers || []).map((a, i) => (
                   <Row key={i} label={a.category || "条件"}>
                     {a.answer}
                     {a.note && <span className="block text-slate-600">{a.note}</span>}

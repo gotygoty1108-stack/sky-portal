@@ -242,9 +242,12 @@ export async function saveCustomer(input: Record<string, unknown>, user: User): 
   const { teams } = await getSettings();
   // Accounts with a team always register customers for that team; only admins without a team pick one.
   const chooseTeam = isAdmin(user) && !user.team;
-  if (chooseTeam && requested && teams.length > 0 && !teams.includes(requested)) throw new UserError("チームは一覧から選んでください。");
   return withLock(async () => {
     const { Customers } = await backend().readMany(["Customers"]);
+    const existingTeam = id ? str(Customers.rows.find((r) => str(r.id) === id)?.team).trim() : "";
+    if (chooseTeam && requested && requested !== existingTeam && teams.length > 0 && !teams.includes(requested)) {
+      throw new UserError("チームは一覧から選んでください。");
+    }
     const now = nowString();
     if (!id) {
       const maxNo = Customers.rows.reduce((max, r) => {
@@ -498,7 +501,12 @@ export async function saveEstimate(input: Record<string, unknown>, user: User): 
   const config = await getSettings();
   const lines = applyPriceRules(cleanLines(raw.lines), config, user);
   if (lines.length === 0) throw new UserError("見積項目を1つ以上入力してください。");
-  const answers = cleanAnswers(raw.answers);
+  // Provisional verdicts/categories come from the configured options, not from the request.
+  const answers = cleanAnswers(raw.answers).map((a) => {
+    if (type !== "仮見積") return a;
+    const opt = config.questions.find((q) => q.id === a.questionId)?.options.find((o) => o.id === a.optionId);
+    return opt ? { ...a, verdict: opt.verdict, flightCategory: opt.flightCategory } : a;
+  });
   const verdict: Verdict = type === "仮見積" ? worstVerdict(answers) : VERDICTS.includes(raw.verdict as Verdict) ? (raw.verdict as Verdict) : "ok";
   if (type === "仮見積" && verdict === "ng") throw new UserError("飛行不可の条件が含まれるため、仮見積を作成できません。");
   const data: EstimateData = {

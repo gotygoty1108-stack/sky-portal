@@ -6,9 +6,9 @@ export const dynamic = "force-dynamic";
 
 export const POST = authed(
   async (user, body) => {
-    const updated = await setOwnPassword(user, body.password);
+    const { user: updated, v } = await setOwnPassword(user, body.password);
     const res = ok(updated);
-    res.cookies.set(SESSION_COOKIE, await createSessionToken(updated), sessionCookieOptions);
+    res.cookies.set(SESSION_COOKIE, await createSessionToken(updated, v), sessionCookieOptions);
     return res;
   },
   { allowPending: true },
