@@ -383,7 +383,6 @@ export function CustomerDetailView({
       </div>
 
       {printing && <DocumentPreview doc={printing} customer={customer} config={config} onClose={() => setPrinting(null)} />}
-      {printing && <DocumentPreview doc={printing} customer={customer} config={config} onClose={() => setPrinting(null)} />}
     </div>
   );
 }
