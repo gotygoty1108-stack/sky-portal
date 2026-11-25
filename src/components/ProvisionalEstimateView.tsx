@@ -6,6 +6,7 @@ import { todayInput, toInputDate, yen } from "@/lib/format";
 import {
   FLOW_CATEGORIES,
   itemToLine,
+  maxCategory,
   nextQuestion,
   worstVerdict,
   type EstimateConfig,
@@ -17,7 +18,7 @@ import {
 } from "@/lib/estimate";
 import type { Customer, Estimate, User } from "@/lib/types";
 import { ROLE_ADMIN } from "@/lib/types";
-import { DocumentPreview, LineEditor, PageHeader, Totals, VerdictBadge, textareaClass } from "./estimate-ui";
+import { CategoryBadge, DocumentPreview, LineEditor, PageHeader, Totals, VerdictBadge, textareaClass } from "./estimate-ui";
 import { Button, Card, Field, inputClass } from "./ui";
 
 export type EstimatePayload = { id?: string; customerId: string; type: "仮見積" | "本見積"; title: string; date: string; sourceId?: string; data: EstimateData };
@@ -89,6 +90,7 @@ export function ProvisionalEstimateView({
   }, [answers, config]);
   const finished = answers.length > 0 && current === null;
   const verdict = worstVerdict(answers);
+  const flightCategory = maxCategory(answers);
   const canEstimate = finished && verdict !== "ng";
 
   const syncFlowLines = (prev: Line[], next: FlowAnswer[]) => {
@@ -102,7 +104,7 @@ export function ProvisionalEstimateView({
   const choose = (q: FlowQuestion, o: FlowOption) => {
     const next = [
       ...answers,
-      { questionId: q.id, optionId: o.id, category: FLOW_CATEGORIES[q.category], question: q.title, answer: o.label, verdict: o.verdict, note: o.note },
+      { questionId: q.id, optionId: o.id, category: FLOW_CATEGORIES[q.category], question: q.title, answer: o.label, verdict: o.verdict, flightCategory: o.flightCategory, note: o.note },
     ];
     setAnswers(next);
     setLines((prev) => syncFlowLines(prev, next));
@@ -133,7 +135,7 @@ export function ProvisionalEstimateView({
     setLines((prev) => (on ? [...prev, itemToLine(item, item.defaultQty || 1)] : prev.filter((l) => l.itemId !== id)));
   };
 
-  const data: EstimateData = { answers, verdict, planId, lines, location, workDate, memo };
+  const data: EstimateData = { answers, verdict, flightCategory, planId, lines, location, workDate, memo };
 
   const handleSave = async () => {
     setSaving(true);
@@ -170,7 +172,7 @@ export function ProvisionalEstimateView({
                       {a.category}：{a.question}
                     </div>
                     <div className="font-bold text-slate-800 flex flex-wrap items-center gap-2">
-                      {a.answer} <VerdictBadge verdict={a.verdict} />
+                      {a.answer} <VerdictBadge verdict={a.verdict} /> <CategoryBadge category={a.flightCategory} />
                     </div>
                     {a.note && <div className="text-xs text-slate-600 mt-1">{a.note}</div>}
                   </div>
@@ -212,7 +214,7 @@ export function ProvisionalEstimateView({
                 {verdict === "ng" ? <XCircle className="w-6 h-6 text-red-600 shrink-0" /> : <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />}
                 <div>
                   <div className="font-bold text-slate-800 flex items-center gap-2">
-                    判定結果：<VerdictBadge verdict={verdict} large />
+                    判定結果：<VerdictBadge verdict={verdict} large /> <CategoryBadge category={flightCategory} large />
                   </div>
                   <p className="text-sm text-slate-600 mt-1">
                     {verdict === "ng"
@@ -306,7 +308,14 @@ export function ProvisionalEstimateView({
             <Card className="p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-slate-700">飛行判定</span>
-                {answers.length > 0 ? <VerdictBadge verdict={verdict} /> : <span className="text-xs text-slate-400">未チェック</span>}
+                {answers.length > 0 ? (
+                  <span className="flex gap-1">
+                    <VerdictBadge verdict={verdict} />
+                    <CategoryBadge category={flightCategory} />
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-400">未チェック</span>
+                )}
               </div>
               <Totals lines={canEstimate ? lines : []} taxRate={config.taxRate} />
               <Button variant="secondary" className="w-full" icon={Eye} onClick={() => setPreview(true)} disabled={!canEstimate}>

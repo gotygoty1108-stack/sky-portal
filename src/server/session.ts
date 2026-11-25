@@ -15,7 +15,7 @@ function secret(): Uint8Array {
 }
 
 export async function createSessionToken(user: User): Promise<string> {
-  return new SignJWT({ id: user.id, name: user.name, role: user.role, team: user.team })
+  return new SignJWT({ id: user.id, name: user.name, role: user.role, team: user.team, ...(user.mustSetPassword ? { pw: true } : {}) })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${MAX_AGE_SEC}s`)
@@ -29,7 +29,7 @@ export async function readSession(token: string | undefined): Promise<User | nul
     if (typeof payload.id !== "string" || typeof payload.name !== "string" || typeof payload.role !== "number" || typeof payload.team !== "string") {
       return null;
     }
-    return { id: payload.id, name: payload.name, role: payload.role, team: payload.team };
+    return { id: payload.id, name: payload.name, role: payload.role, team: payload.team, ...(payload.pw === true ? { mustSetPassword: true } : {}) };
   } catch {
     return null;
   }

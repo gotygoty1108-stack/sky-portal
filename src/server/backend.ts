@@ -7,7 +7,7 @@ export type Row = Record<string, Cell> & { _row: number };
 export type Table = { headers: string[]; rows: Row[] };
 
 export const SHEET_HEADERS = {
-  Accounts: ["id", "password", "team", "name", "role"],
+  Accounts: ["id", "password", "team", "name", "role", "status", "updatedAt"],
   Customers: ["id", "name", "kana", "contactPerson", "email", "phone", "address", "status", "createdAt", "updatedAt", "team"],
   Records: ["id", "customerId", "date", "title", "content", "createdAt", "contractId", "data", "updatedAt"],
   Estimates: ["id", "customerId", "date", "title", "amount", "type", "details", "createdAt", "sourceId", "data", "updatedAt"],

@@ -3,9 +3,9 @@
 import { ClipboardList, Eye, FileText, Save, ShieldCheck } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { addDaysInput, todayInput, toInputDate } from "@/lib/format";
-import { VERDICT_LABEL, type EstimateConfig, type EstimateData, type Line, type Verdict } from "@/lib/estimate";
+import { CATEGORY_LABEL, maxCategory, sortAnswers, VERDICT_LABEL, type EstimateConfig, type EstimateData, type Line, type Verdict } from "@/lib/estimate";
 import type { Customer, Estimate } from "@/lib/types";
-import { DocumentPreview, LineEditor, PageHeader, Totals, VerdictBadge, textareaClass } from "./estimate-ui";
+import { CategoryBadge, DocumentPreview, LineEditor, PageHeader, Totals, VerdictBadge, textareaClass } from "./estimate-ui";
 import type { EstimatePayload } from "./ProvisionalEstimateView";
 import { Button, Card, Field, inputClass } from "./ui";
 
@@ -40,7 +40,8 @@ export function FinalEstimateView({
   onSave: (payload: EstimatePayload) => Promise<Estimate | null>;
 }) {
   const base = initial?.data || source?.data;
-  const answers = initial?.data.answers?.length ? initial.data.answers : source?.data.answers || [];
+  const answers = sortAnswers(initial?.data.answers?.length ? initial.data.answers : source?.data.answers || []);
+  const [flightCategory, setFlightCategory] = useState<number>(initial?.data.flightCategory ?? source?.data.flightCategory ?? maxCategory(answers));
   const [lines, setLines] = useState<Line[]>(() => (base?.lines || []).map((l) => ({ ...l })));
   const [verdict, setVerdict] = useState<Verdict>(initial?.data.verdict || source?.data.verdict || "ok");
   const [judgeMemo, setJudgeMemo] = useState(initial?.data.judgeMemo || "");
@@ -55,7 +56,7 @@ export function FinalEstimateView({
   const [savedId, setSavedId] = useState(initial?.id || "");
   const sourceId = initial?.sourceId || source?.id || "";
 
-  const data: EstimateData = { answers, verdict, planId: base?.planId || "", lines, location, workDate, validUntil, memo, judgeMemo };
+  const data: EstimateData = { answers, verdict, flightCategory, planId: base?.planId || "", lines, location, workDate, validUntil, memo, judgeMemo };
 
   const handleSave = async () => {
     if (verdict === "ng" && !confirm("飛行判定が「飛行不可」のままです。保存しますか？")) return;
@@ -92,7 +93,7 @@ export function FinalEstimateView({
                   {answers.map((a, i) => (
                     <li key={i} className="text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
                       <span className="text-slate-500">{a.category}：</span>
-                      <span className="font-bold text-slate-800">{a.answer}</span> <VerdictBadge verdict={a.verdict} />
+                      <span className="font-bold text-slate-800">{a.answer}</span> <VerdictBadge verdict={a.verdict} /> <CategoryBadge category={a.flightCategory} />
                       {a.note && <div className="text-xs text-slate-600 mt-0.5">{a.note}</div>}
                     </li>
                   ))}
@@ -112,6 +113,20 @@ export function FinalEstimateView({
                   className={`rounded-full border-2 px-1 py-0.5 transition-all ${verdict === v ? "border-blue-600 shadow" : "border-transparent opacity-60 hover:opacity-100"}`}
                 >
                   <VerdictBadge verdict={v} large />
+                </button>
+              ))}
+            </div>
+            <div className="text-sm font-bold text-slate-700 mb-2">飛行カテゴリー</div>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {[0, 1, 2, 3].map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  disabled={readOnly}
+                  onClick={() => setFlightCategory(c)}
+                  className={`rounded-full border-2 px-3 py-1 text-sm font-bold transition-all ${flightCategory === c ? "border-indigo-600 bg-indigo-50 text-indigo-800 shadow" : "border-slate-200 text-slate-500 hover:border-indigo-300"}`}
+                >
+                  {c === 0 ? "対象外" : CATEGORY_LABEL[c]}
                 </button>
               ))}
             </div>
@@ -159,7 +174,10 @@ export function FinalEstimateView({
             <Card className="p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-slate-700">飛行判定</span>
-                <VerdictBadge verdict={verdict} />
+                <span className="flex gap-1">
+                  <VerdictBadge verdict={verdict} />
+                  <CategoryBadge category={flightCategory} />
+                </span>
               </div>
               <Totals lines={lines} taxRate={config.taxRate} />
               <Button variant="secondary" className="w-full" icon={Eye} onClick={() => setPreview(true)}>

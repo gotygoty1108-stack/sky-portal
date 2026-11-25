@@ -25,6 +25,7 @@ import { DashboardView } from "./DashboardView";
 import { CustomerFormModal } from "./FormModals";
 import { RecordView, type RecordPayload } from "./RecordView";
 import { LoginView } from "./LoginView";
+import { PasswordSetupView } from "./PasswordSetupView";
 import { InstallButton, OfflineBanner, useOnline, useServiceWorker } from "./pwa";
 import { FullScreenLoader, OverlayLoader } from "./ui";
 
@@ -128,7 +129,7 @@ export default function DronePortal() {
         const me = await api<User | null>("/api/auth");
         if (me) {
           setUser(me);
-          await loadData(me);
+          if (!me.mustSetPassword) await loadData(me);
         }
       } catch (err) {
         const cache = readCache();
@@ -195,6 +196,7 @@ export default function DronePortal() {
     try {
       const u = await api<User>("/api/auth", { body: { userId, password } });
       setUser(u);
+      if (u.mustSetPassword) return;
       setBusy("データを読み込んでいます...");
       await loadData(u);
       setNav({ view: "dashboard", customerId: null });
@@ -297,6 +299,26 @@ export default function DronePortal() {
         <OfflineBanner online={online} cachedAt={null} />
         <LoginView onLogin={handleLogin} loading={busy !== null} error={loginError} />
       </>
+    );
+  }
+
+  if (user.mustSetPassword) {
+    return (
+      <PasswordSetupView
+        user={user}
+        onLogout={handleLogout}
+        onDone={async (u) => {
+          setUser(u);
+          setBusy("データを読み込んでいます...");
+          try {
+            await loadData(u);
+          } catch (err) {
+            handleError(err, "データの読み込みに失敗しました");
+          } finally {
+            setBusy(null);
+          }
+        }}
+      />
     );
   }
 
@@ -432,13 +454,14 @@ export default function DronePortal() {
           />
         )}
 
-        {view === "admin" && <AdminSettingsView key={JSON.stringify(config).length} config={config} readOnly={readOnly} onBack={() => goBack("dashboard")} onSave={handleSaveSettings} />}
+        {view === "admin" && <AdminSettingsView key={JSON.stringify(config).length} config={config} currentUserId={user.id} readOnly={readOnly} onBack={() => goBack("dashboard")} onSave={handleSaveSettings} />}
       </main>
 
       {modal?.kind === "customer" && <CustomerFormModal
           initialData={modal.editing}
           isAdmin={user.role === ROLE_ADMIN}
-          teams={[...new Set(customers.map((c) => c.team).filter(Boolean))].sort()}
+          teams={config.teams}
+          lockedTeam={user.team}
           onClose={() => setModal(null)} onSave={handleSaveCustomer} />}
     </div>
   );

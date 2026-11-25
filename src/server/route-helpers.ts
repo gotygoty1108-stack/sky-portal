@@ -14,10 +14,11 @@ export function fail(message: string, status = 400) {
 
 type Handler = (user: User, body: Record<string, unknown>) => Promise<NextResponse>;
 
-export function authed(handler: Handler, opts: { role?: number } = {}) {
+export function authed(handler: Handler, opts: { role?: number; allowPending?: boolean } = {}) {
   return async (req: Request) => {
     const user = await currentUser();
     if (!user) return fail("ログインしてください。", 401);
+    if (user.mustSetPassword && !opts.allowPending) return fail("パスワードの本登録を完了してください。", 403);
     if (opts.role !== undefined && user.role !== opts.role) return fail("この操作の権限がありません。", 403);
     let body: Record<string, unknown> = {};
     if (req.method !== "GET") {

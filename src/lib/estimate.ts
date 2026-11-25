@@ -19,6 +19,8 @@ export type FlowOption = {
   label: string;
   description: string;
   verdict: Verdict;
+  /** Flight category 1-3 (カテゴリーⅠ〜Ⅲ); 0 = not applicable. */
+  flightCategory: number;
   note: string;
   /** Price item ids added to the estimate when this option is chosen. */
   addItems: string[];
@@ -68,6 +70,8 @@ export type EstimateConfig = {
   plans: Plan[];
   priceItems: PriceItem[];
   questions: FlowQuestion[];
+  /** Team names selectable for customers and accounts. */
+  teams: string[];
 };
 
 export type Line = {
@@ -87,12 +91,14 @@ export type FlowAnswer = {
   question: string;
   answer: string;
   verdict: Verdict;
+  flightCategory?: number;
   note: string;
 };
 
 export type EstimateData = {
   answers?: FlowAnswer[];
   verdict?: Verdict;
+  flightCategory?: number;
   planId?: string;
   lines: Line[];
   location?: string;
@@ -118,11 +124,30 @@ const opt = (id: string, label: string, verdict: Verdict, extra: Partial<FlowOpt
   label,
   description: "",
   verdict,
+  flightCategory: defaultCategory(verdict),
   note: "",
   addItems: [],
   next: "",
   ...extra,
 });
+
+function defaultCategory(verdict: Verdict): number {
+  return verdict === "permit" ? 2 : verdict === "ok" ? 1 : 0;
+}
+
+export const CATEGORY_LABEL: Record<number, string> = { 1: "カテゴリーⅠ", 2: "カテゴリーⅡ", 3: "カテゴリーⅢ" };
+
+/** The flight's category is the highest category among the chosen options. */
+export function maxCategory(answers: { flightCategory?: number }[]): number {
+  return answers.reduce((m, a) => Math.max(m, a.flightCategory || 0), 0);
+}
+
+/** Display order of answers: 飛行方法 → 場所 → 空域 → その他 (stable within a category). */
+export function sortAnswers<T extends { category: string }>(answers: T[]): T[] {
+  const order: string[] = Object.values(FLOW_CATEGORIES);
+  const rank = (c: string) => (order.includes(c) ? order.indexOf(c) : order.length);
+  return answers.map((a, i) => ({ a, i })).sort((x, y) => rank(x.a.category) - rank(y.a.category) || x.i - y.i).map((x) => x.a);
+}
 
 export const DEFAULT_CONFIG: EstimateConfig = {
   companyName: "SKY-PORTAL ドローン事業部",
@@ -160,6 +185,7 @@ export const DEFAULT_CONFIG: EstimateConfig = {
     { id: "riskHigh", name: "特殊環境加算（高リスク）", description: "水上・海上・山間部・森林など", unitPrice: 10000, unit: "式", defaultQty: 1, group: "flow", plan: "" },
     { id: "localPermit", name: "土地管理者等との調整費", description: "公園・河川・道路管理者等への許可申請", unitPrice: 10000, unit: "式", defaultQty: 1, group: "flow", plan: "" },
   ],
+  teams: [],
   questions: [
     {
       id: "method",
@@ -171,6 +197,11 @@ export const DEFAULT_CONFIG: EstimateConfig = {
         opt("night", "夜間飛行（日没後〜日出前）", "permit", { addItems: ["specialPermit", "riskLow"], note: "夜間飛行の承認が必要です。" }),
         opt("bvlos", "目視外飛行（モニターを見ながら等）", "permit", { addItems: ["specialPermit", "riskLow"], next: "bvlosAssist" }),
         opt("near", "人・建物・車両から30m未満", "permit", { addItems: ["specialPermit"], note: "30m未満飛行の承認が必要です。" }),
+        opt("third", "第三者上空（立入管理措置なし）", "permit", {
+          addItems: ["specialPermit"],
+          flightCategory: 3,
+          note: "カテゴリーⅢ飛行です。一等無人航空機操縦士と第一種機体認証、飛行ごとの許可・承認が必要です。",
+        }),
         opt("drop", "物件投下・危険物輸送", "permit", { addItems: ["specialPermit"], note: "物件投下・危険物輸送の承認が必要です。" }),
       ],
     },
@@ -192,12 +223,12 @@ export const DEFAULT_CONFIG: EstimateConfig = {
       help: "",
       options: [
         opt("private", "私有地・自社敷地（所有者の許可あり）", "ok"),
-        opt("park", "公園・河川敷・海岸", "permit", { addItems: ["localPermit"], note: "土地管理者（自治体等）の許可が必要な場合があります。" }),
+        opt("park", "公園・河川敷・海岸", "permit", { flightCategory: 1, addItems: ["localPermit"], note: "土地管理者（自治体等）の許可が必要な場合があります。" }),
         opt("event", "イベント会場（催し場所の上空）", "permit", { addItems: ["specialPermit"], note: "催し場所上空飛行の承認が必要です。" }),
         opt("water", "水上・海上", "ok", { addItems: ["riskHigh"] }),
         opt("mountain", "山間部・森林", "ok", { addItems: ["riskHigh"] }),
-        opt("road", "道路・線路の上空", "permit", { addItems: ["localPermit"], note: "道路使用許可・管理者との協議が必要です。" }),
-        opt("indoor", "屋内（四方・上部が囲まれた場所）", "ok", { addItems: ["riskLow"], note: "屋内は航空法の対象外です。", next: "end" }),
+        opt("road", "道路・線路の上空", "permit", { flightCategory: 1, addItems: ["localPermit"], note: "道路使用許可・管理者との協議が必要です。" }),
+        opt("indoor", "屋内（四方・上部が囲まれた場所）", "ok", { flightCategory: 0, addItems: ["riskLow"], note: "屋内は航空法の対象外です。", next: "end" }),
         opt("restricted", "国の重要施設・防衛関係施設・原子力発電所の周辺", "ng", { note: "小型無人機等飛行禁止法により原則飛行できません。" }),
       ],
     },
@@ -225,7 +256,11 @@ export function parseConfig(raw: unknown): EstimateConfig {
     ...c,
     plans: Array.isArray(c.plans) ? c.plans : DEFAULT_CONFIG.plans,
     priceItems: Array.isArray(c.priceItems) ? c.priceItems : DEFAULT_CONFIG.priceItems,
-    questions: Array.isArray(c.questions) ? c.questions : DEFAULT_CONFIG.questions,
+    questions: (Array.isArray(c.questions) ? c.questions : DEFAULT_CONFIG.questions).map((q) => ({
+      ...q,
+      options: q.options.map((o) => ({ ...o, flightCategory: typeof o.flightCategory === "number" ? o.flightCategory : defaultCategory(o.verdict) })),
+    })),
+    teams: Array.isArray(c.teams) ? c.teams : [],
   };
 }
 

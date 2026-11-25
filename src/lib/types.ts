@@ -3,7 +3,16 @@ export const ROLE_ADMIN = 2;
 
 import type { ContractData, EstimateData } from "./estimate";
 
-export type User = { id: string; name: string; role: number; team: string };
+export type User = {
+  id: string;
+  name: string;
+  role: number;
+  team: string;
+  /** Logged in with a temporary password; must register a password before using the app. */
+  mustSetPassword?: boolean;
+};
+
+export type Account = { id: string; name: string; role: number; team: string; pending: boolean; updatedAt: string };
 
 // Customer status is derived from the documents; it is never edited by hand.
 export const CUSTOMER_STATUSES = ["顧客情報登録済み", "仮見積作成済み", "本見積作成済み", "契約済み", "業務請負記録済み"] as const;

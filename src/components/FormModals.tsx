@@ -24,12 +24,15 @@ export function CustomerFormModal({
   initialData,
   isAdmin,
   teams,
+  lockedTeam,
   onClose,
   onSave,
 }: {
   initialData: Customer | null;
   isAdmin: boolean;
   teams: string[];
+  /** Team of the logged-in account; when set, the team cannot be chosen. */
+  lockedTeam: string;
   onClose: () => void;
   onSave: (data: CustomerFields & { id?: string }) => Promise<void>;
 }) {
@@ -95,15 +98,24 @@ export function CustomerFormModal({
         <Field label="所在地" className="md:col-span-2">
           <input name="address" value={formData.address} onChange={handleChange} className={inputClass} placeholder="例: 東京都新宿区..." />
         </Field>
-        {isAdmin && (
-          <Field label="担当チーム（team）" className="md:col-span-2">
-            <input name="team" list="team-options" value={formData.team} onChange={handleChange} className={inputClass} placeholder="同じteamの営業アカウントに表示されます" />
-            <datalist id="team-options">
-              {teams.map((t) => (
-                <option key={t} value={t} />
-              ))}
-            </datalist>
+        {lockedTeam ? (
+          <Field label="担当チーム" className="md:col-span-2">
+            <div className={`${inputClass} bg-slate-100 text-slate-600`}>{initialData ? initialData.team || "未設定" : lockedTeam}</div>
           </Field>
+        ) : (
+          isAdmin && (
+            <Field label="担当チーム" className="md:col-span-2">
+              <select name="team" value={formData.team} onChange={handleChange} className={inputClass}>
+                <option value="">（未設定）</option>
+                {[...new Set([...teams, ...(formData.team ? [formData.team] : [])])].map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-slate-500">チームは管理者設定の「チーム」で追加できます。</span>
+            </Field>
+          )
         )}
       </form>
     </Modal>

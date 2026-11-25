@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { login } from "@/server/portal";
+import { login } from "@/server/accounts";
 import { clearLoginFailures, isLoginLocked, recordLoginFailure } from "@/server/login-limit";
 import { createSessionToken, currentUser, SESSION_COOKIE, sessionCookieOptions } from "@/server/session";
 import { fail, ok } from "@/server/route-helpers";
