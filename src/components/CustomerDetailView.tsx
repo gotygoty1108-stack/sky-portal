@@ -5,7 +5,7 @@ import { useState, type ReactNode } from "react";
 import { formatDate, yen } from "@/lib/format";
 import { withTax, type ContractData, type EstimateConfig } from "@/lib/estimate";
 import { formatMinutes, ROLE_ADMIN, type Contract, type Customer, type Estimate, type User } from "@/lib/types";
-import { DocumentPreview, VerdictBadge, type PrintDoc } from "./estimate-ui";
+import { CategoryBadge, DocumentPreview, VerdictBadge, type PrintDoc } from "./estimate-ui";
 import { Badge, Button, Card, statusBadgeType } from "./ui";
 
 type Tab = "info" | "records" | "documents";
@@ -77,6 +77,7 @@ function EstimateCard({
         <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <Badge type={est.type === "本見積" ? "primary" : "default"}>{est.type || "見積"}</Badge>
           {est.data.verdict && <VerdictBadge verdict={est.data.verdict} />}
+          <CategoryBadge category={est.data.flightCategory} />
           <span className="font-bold text-slate-800 truncate">{est.title}</span>
         </div>
       </div>

@@ -3,6 +3,7 @@
 import { ArrowDown, ArrowUp, Plus, RotateCcw, Save, Settings, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import {
+  CATEGORY_LABEL,
   DEFAULT_CONFIG,
   FLOW_CATEGORIES,
   newKey,
@@ -16,15 +17,18 @@ import {
   type PriceItem,
   type Verdict,
 } from "@/lib/estimate";
+import { AccountsPanel } from "./AccountsPanel";
 import { PageHeader, textareaClass } from "./estimate-ui";
 import { Button, Card, Field, inputClass } from "./ui";
 
-type Tab = "flow" | "prices" | "plans" | "general";
+type Tab = "flow" | "prices" | "plans" | "teams" | "accounts" | "general";
 const TABS: { key: Tab; label: string }[] = [
   { key: "flow", label: "飛行条件チェック" },
   { key: "prices", label: "料金表" },
   { key: "plans", label: "プラン" },
+  { key: "teams", label: "チーム" },
   { key: "general", label: "営業・書類設定" },
+  { key: "accounts", label: "アカウント管理" },
 ];
 
 const cell = "w-full px-2 py-1.5 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none";
@@ -72,6 +76,17 @@ function OptionEditor({
               {(Object.keys(VERDICT_LABEL) as Verdict[]).map((v) => (
                 <option key={v} value={v}>
                   {VERDICT_LABEL[v]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-slate-500">
+            カテゴリー判定
+            <select className={cell} value={option.flightCategory} onChange={(e) => set({ flightCategory: Number(e.target.value) })} disabled={option.verdict === "ng"}>
+              <option value={0}>対象外・判定なし</option>
+              {[1, 2, 3].map((c) => (
+                <option key={c} value={c}>
+                  {CATEGORY_LABEL[c]}
                 </option>
               ))}
             </select>
@@ -182,7 +197,7 @@ function QuestionEditor({
           variant="ghost"
           icon={Plus}
           className="text-blue-600"
-          onClick={() => set({ options: [...q.options, { id: `o${newKey()}`, label: "", description: "", verdict: "ok", note: "", addItems: [], next: "" }] })}
+          onClick={() => set({ options: [...q.options, { id: `o${newKey()}`, label: "", description: "", verdict: "ok", flightCategory: 1, note: "", addItems: [], next: "" }] })}
         >
           選択肢を追加
         </Button>
@@ -193,11 +208,13 @@ function QuestionEditor({
 
 export function AdminSettingsView({
   config,
+  currentUserId,
   readOnly,
   onBack,
   onSave,
 }: {
   config: EstimateConfig;
+  currentUserId: string;
   readOnly: boolean;
   onBack: () => void;
   onSave: (config: EstimateConfig) => Promise<boolean>;
@@ -402,6 +419,29 @@ export function AdminSettingsView({
           </Button>
         </Card>
       )}
+
+      {tab === "teams" && (
+        <Card className="p-4 space-y-2">
+          <p className="text-sm text-slate-600 mb-2">ここで作ったチームを、顧客登録とアカウント管理で選べます。チームが設定されたアカウントでは、顧客は自動でそのチームになります。</p>
+          {draft.teams.map((t, i) => (
+            <div key={i} className="flex gap-2 items-center">
+              <input className={cell} value={t} onChange={(e) => set({ teams: draft.teams.map((x, j) => (j === i ? e.target.value : x)) })} placeholder="チーム名" />
+              <IconBtn onClick={() => set({ teams: move(draft.teams, i, -1) })} label="上へ">
+                <ArrowUp className="w-4 h-4" />
+              </IconBtn>
+              <IconBtn onClick={() => set({ teams: draft.teams.filter((_, j) => j !== i) })} label="削除" danger>
+                <Trash2 className="w-4 h-4" />
+              </IconBtn>
+            </div>
+          ))}
+          <Button variant="secondary" icon={Plus} onClick={() => set({ teams: [...draft.teams, ""] })}>
+            チームを追加
+          </Button>
+          <p className="text-xs text-slate-500">チーム名を変えても、すでに登録済みの顧客・アカウントのチームは変わりません。追加・変更後は右上の「保存」を押してください。</p>
+        </Card>
+      )}
+
+      {tab === "accounts" && <AccountsPanel teams={config.teams} currentUserId={currentUserId} readOnly={readOnly} />}
 
       {tab === "general" && (
         <Card className="p-5 grid md:grid-cols-2 gap-4">

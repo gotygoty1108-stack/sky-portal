@@ -19,6 +19,7 @@ import { byNewest } from "@/lib/format";
 import {
   adjustRange,
   FLOW_CATEGORIES,
+  maxCategory,
   parseConfig,
   sumLines,
   worstVerdict,
@@ -35,7 +36,7 @@ export class UserError extends Error {}
 
 let queue: Promise<unknown> = Promise.resolve();
 // Serializes writes inside this process so ID numbering does not collide.
-function withLock<T>(fn: () => Promise<T>): Promise<T> {
+export function withLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = queue.then(fn, fn);
   queue = run.catch(() => undefined);
   return run;
@@ -173,21 +174,6 @@ function toContract(r: Row): Contract {
   };
 }
 
-// ---------- login ----------
-
-export async function login(userId: string, password: string): Promise<User | null> {
-  const { Accounts } = await backend().readMany(["Accounts"]);
-  const account = Accounts.rows.find((a) => str(a.id) === userId && str(a.password) === password);
-  if (!account) return null;
-  const role = parseInt(str(account.role), 10);
-  return {
-    id: str(account.id),
-    name: str(account.name) || str(account.id),
-    role: Number.isFinite(role) ? role : 1,
-    team: str(account.team).trim(),
-  };
-}
-
 // ---------- read ----------
 
 export async function getInitialData(user: User): Promise<Customer[]> {
@@ -233,7 +219,7 @@ async function refreshCustomerStatus(customerId: string) {
   if (str(row.status) !== status) await backend().updateCells("Customers", row._row, { status });
 }
 
-function cleanCustomerFields(input: Record<string, unknown>, user: User): CustomerFields {
+function cleanCustomerFields(input: Record<string, unknown>): CustomerFields {
   const fields: CustomerFields = {
     name: cleanText(input.name),
     kana: cleanText(input.kana),
@@ -242,18 +228,26 @@ function cleanCustomerFields(input: Record<string, unknown>, user: User): Custom
     phone: cleanText(input.phone, 50),
     address: cleanText(input.address, 300),
     status: CUSTOMER_STATUSES[0],
-    team: isAdmin(user) ? cleanText(input.team, 50) : user.team,
+    team: "",
   };
   if (!fields.name) throw new UserError("企業名を入力してください。");
   if (!fields.contactPerson) throw new UserError("担当者名を入力してください。");
   return fields;
 }
 
-export function saveCustomer(input: Record<string, unknown>, user: User): Promise<{ customer: CustomerBase; isNew: boolean }> {
-  const fields = cleanCustomerFields(input, user);
+export async function saveCustomer(input: Record<string, unknown>, user: User): Promise<{ customer: CustomerBase; isNew: boolean }> {
+  const fields = cleanCustomerFields(input);
   const id = cleanText(input.id, 50);
+  const requested = cleanText(input.team, 50);
+  const { teams } = await getSettings();
+  // Accounts with a team always register customers for that team; only admins without a team pick one.
+  const chooseTeam = isAdmin(user) && !user.team;
   return withLock(async () => {
     const { Customers } = await backend().readMany(["Customers"]);
+    const existingTeam = id ? str(Customers.rows.find((r) => str(r.id) === id)?.team).trim() : "";
+    if (chooseTeam && requested && requested !== existingTeam && teams.length > 0 && !teams.includes(requested)) {
+      throw new UserError("チームは一覧から選んでください。");
+    }
     const now = nowString();
     if (!id) {
       const maxNo = Customers.rows.reduce((max, r) => {
@@ -263,6 +257,7 @@ export function saveCustomer(input: Record<string, unknown>, user: User): Promis
       const customer: CustomerBase = {
         id: `C-${String(maxNo + 1).padStart(3, "0")}`,
         ...fields,
+        team: chooseTeam ? requested : user.team,
         createdAt: now,
         updatedAt: now,
       };
@@ -271,8 +266,9 @@ export function saveCustomer(input: Record<string, unknown>, user: User): Promis
     }
     const row = Customers.rows.find((r) => str(r.id) === id);
     if (!row || !canAccess(row, user)) throw new UserError("対象の顧客データが見つかりません。");
-    const { status: _status, ...editable } = fields;
+    const { status: _status, ...rest } = fields;
     void _status;
+    const editable = { ...rest, team: chooseTeam ? requested : str(row.team) };
     await backend().updateCells("Customers", row._row, { ...editable, updatedAt: now });
     return { customer: { ...toCustomerBase(row), ...editable, updatedAt: now }, isNew: false };
   });
@@ -367,6 +363,7 @@ function cleanConfig(input: Record<string, unknown>): EstimateConfig {
     salesAdjustPct: cleanNum(input.salesAdjustPct, 0, 100),
     estimateNotes: cleanText(input.estimateNotes, 2000),
     contractTerms: cleanText(input.contractTerms, 10000),
+    teams: [...new Set((Array.isArray(input.teams) ? input.teams : []).slice(0, 100).map((t) => cleanText(t, 50)).filter(Boolean))],
     plans: list(input.plans, 20)
       .map((p) => ({ id: cleanId(p.id), label: cleanText(p.label, 50), description: cleanText(p.description, 200) }))
       .filter((p) => p.id && p.label),
@@ -395,6 +392,7 @@ function cleanConfig(input: Record<string, unknown>): EstimateConfig {
             label: cleanText(o.label, 100),
             description: cleanText(o.description, 300),
             verdict: VERDICTS.includes(o.verdict as Verdict) ? (o.verdict as Verdict) : "ok",
+            flightCategory: cleanCategory(o.flightCategory),
             note: cleanText(o.note, 500),
             addItems: Array.isArray(o.addItems) ? o.addItems.slice(0, 20).map(cleanId).filter(Boolean) : [],
             next: cleanId(o.next),
@@ -450,8 +448,14 @@ function cleanAnswers(v: unknown): FlowAnswer[] {
     question: cleanText(a.question, 200),
     answer: cleanText(a.answer, 100),
     verdict: VERDICTS.includes(a.verdict as Verdict) ? (a.verdict as Verdict) : "ok",
+    flightCategory: cleanCategory(a.flightCategory),
     note: cleanText(a.note, 500),
   }));
+}
+
+function cleanCategory(v: unknown): number {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(3, Math.max(0, n)) : 0;
 }
 
 // Sales accounts may only move catalog prices within the configured range.
@@ -497,12 +501,18 @@ export async function saveEstimate(input: Record<string, unknown>, user: User): 
   const config = await getSettings();
   const lines = applyPriceRules(cleanLines(raw.lines), config, user);
   if (lines.length === 0) throw new UserError("見積項目を1つ以上入力してください。");
-  const answers = cleanAnswers(raw.answers);
+  // Provisional verdicts/categories come from the configured options, not from the request.
+  const answers = cleanAnswers(raw.answers).map((a) => {
+    if (type !== "仮見積") return a;
+    const opt = config.questions.find((q) => q.id === a.questionId)?.options.find((o) => o.id === a.optionId);
+    return opt ? { ...a, verdict: opt.verdict, flightCategory: opt.flightCategory } : a;
+  });
   const verdict: Verdict = type === "仮見積" ? worstVerdict(answers) : VERDICTS.includes(raw.verdict as Verdict) ? (raw.verdict as Verdict) : "ok";
   if (type === "仮見積" && verdict === "ng") throw new UserError("飛行不可の条件が含まれるため、仮見積を作成できません。");
   const data: EstimateData = {
     answers,
     verdict,
+    flightCategory: type === "仮見積" || raw.flightCategory === undefined ? maxCategory(answers) : cleanCategory(raw.flightCategory),
     planId: cleanId(raw.planId),
     lines,
     location: cleanText(raw.location, 300),

@@ -1,12 +1,14 @@
 "use client";
 
-import { ArrowLeft, Plus, Printer, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Plus, Printer, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { formatDate, yen } from "@/lib/format";
 import {
   adjustRange,
+  CATEGORY_LABEL,
   itemToLine,
+  sortAnswers,
   lineSubtotal,
   PRICE_GROUP_LABEL,
   sumLines,
@@ -26,6 +28,15 @@ const VERDICT_STYLE: Record<Verdict, string> = {
   permit: "bg-amber-100 text-amber-800 border-amber-300",
   ng: "bg-red-100 text-red-800 border-red-300",
 };
+
+export function CategoryBadge({ category, large }: { category?: number; large?: boolean }) {
+  if (!category) return null;
+  return (
+    <span className={`inline-block border rounded-full font-bold whitespace-nowrap bg-indigo-50 text-indigo-800 border-indigo-300 ${large ? "px-4 py-1.5 text-base" : "px-2.5 py-0.5 text-xs"}`}>
+      {CATEGORY_LABEL[category] || `カテゴリー${category}`}
+    </span>
+  );
+}
 
 export function VerdictBadge({ verdict, large }: { verdict: Verdict; large?: boolean }) {
   return (
@@ -59,6 +70,13 @@ export function LineEditor({
   const catalog = new Map(config.priceItems.map((i) => [i.id, i]));
   const set = (idx: number, patch: Partial<Line>) => onChange(lines.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   const remove = (idx: number) => onChange(lines.filter((_, i) => i !== idx));
+  const move = (idx: number, dir: -1 | 1) => {
+    const j = idx + dir;
+    if (j < 0 || j >= lines.length) return;
+    const next = [...lines];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    onChange(next);
+  };
   const addCatalog = () => {
     const item = catalog.get(pick);
     if (item) onChange([...lines, itemToLine(item, item.defaultQty || 1)]);
@@ -82,7 +100,7 @@ export function LineEditor({
               <th className="text-right py-2 font-bold w-20">数量</th>
               <th className="text-left py-2 font-bold w-16 pl-2">単位</th>
               <th className="text-right py-2 font-bold w-28">金額</th>
-              <th className="w-10" />
+              <th className="w-24" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -133,7 +151,13 @@ export function LineEditor({
                     <input className={smallInput} value={l.unit} onChange={(e) => set(idx, { unit: e.target.value })} disabled={disabled || lockName} />
                   </td>
                   <td className={`py-2 text-right font-bold whitespace-nowrap align-top pt-3.5 ${l.discount ? "text-red-600" : "text-slate-800"}`}>{yen(lineSubtotal(l))}</td>
-                  <td className="py-2 text-right align-top">
+                  <td className="py-2 text-right align-top whitespace-nowrap">
+                    <button type="button" onClick={() => move(idx, -1)} disabled={disabled || idx === 0} className="p-1 text-slate-400 hover:text-blue-600 disabled:opacity-30" aria-label="上へ">
+                      <ArrowUp className="w-4 h-4" />
+                    </button>
+                    <button type="button" onClick={() => move(idx, 1)} disabled={disabled || idx === lines.length - 1} className="p-1 text-slate-400 hover:text-blue-600 disabled:opacity-30" aria-label="下へ">
+                      <ArrowDown className="w-4 h-4" />
+                    </button>
                     <button type="button" onClick={() => remove(idx)} disabled={disabled} className="p-2 text-slate-400 hover:text-red-600" aria-label="削除">
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -237,7 +261,7 @@ function LinesTable({ lines }: { lines: Line[] }) {
     <table className="w-full text-[13px] border-collapse">
       <thead>
         <tr className="bg-slate-100">
-          <th className="border border-slate-400 px-2 py-1.5 text-left">品目</th>
+          <th className="border border-slate-400 px-2 py-1.5 text-left">項目</th>
           <th className="border border-slate-400 px-2 py-1.5 text-right w-16">数量</th>
           <th className="border border-slate-400 px-2 py-1.5 w-12">単位</th>
           <th className="border border-slate-400 px-2 py-1.5 text-right w-24">単価</th>
@@ -273,11 +297,6 @@ export function DocumentPreview({ doc, customer, config, onClose }: { doc: Print
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
   }, []);
   if (!mounted) return null;
 
@@ -378,14 +397,15 @@ export function DocumentPreview({ doc, customer, config, onClose }: { doc: Print
           </table>
         </div>
 
-        {doc.kind !== "contract" && doc.data.answers && doc.data.answers.length > 0 && (
+        {doc.kind !== "contract" && ((doc.data.answers && doc.data.answers.length > 0) || !!doc.data.flightCategory) && (
           <div className="mb-5 print-avoid-break">
             <h2 className="font-bold text-sm border-l-4 border-slate-800 pl-2 mb-2 flex items-center gap-3">
               飛行条件の確認結果 {doc.data.verdict && <VerdictBadge verdict={doc.data.verdict} />}
+              <CategoryBadge category={doc.data.flightCategory} />
             </h2>
             <table className="w-full text-[12px] border-collapse">
               <tbody>
-                {doc.data.answers.map((a, i) => (
+                {sortAnswers(doc.data.answers || []).map((a, i) => (
                   <Row key={i} label={a.category || "条件"}>
                     {a.answer}
                     {a.note && <span className="block text-slate-600">{a.note}</span>}
