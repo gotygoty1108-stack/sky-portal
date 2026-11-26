@@ -400,6 +400,10 @@ export default function DronePortal() {
             onOpenProvisional={(id) => navigateTo("provisional", selected.id, { docId: id })}
             onOpenFinal={(t) => navigateTo("final", selected.id, { docId: t.id, sourceId: t.sourceId })}
             onOpenContract={(t) => navigateTo("contract", selected.id, { docId: t.id, sourceId: t.sourceId })}
+            onDeleted={async (t) => {
+              if (t.kind === "customer") navigateTo("dashboard", null);
+              await handleRefresh();
+            }}
           />
         )}
 

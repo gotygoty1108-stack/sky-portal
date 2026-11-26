@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowLeft, Calculator, Calendar, Eye, FileCheck, FileText, Info, Mail, MapPin, Pencil, Phone, Plane, Plus, Settings, User as UserIcon } from "lucide-react";
+import { ArrowLeft, Calculator, Calendar, Eye, FileCheck, FileText, Info, Mail, MapPin, Pencil, Phone, Plane, Plus, Settings, Trash2, User as UserIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { formatDate, yen } from "@/lib/format";
 import { withTax, type ContractData, type EstimateConfig } from "@/lib/estimate";
 import { formatMinutes, ROLE_ADMIN, type Contract, type Customer, type Estimate, type User } from "@/lib/types";
 import { CategoryBadge, DocumentPreview, VerdictBadge, type PrintDoc } from "./estimate-ui";
 import { Badge, Button, Card, statusBadgeType } from "./ui";
+import { DeleteDialog, type DeleteTarget } from "./DeleteDialog";
 
 type Tab = "info" | "records" | "documents";
 const TABS: { key: Tab; label: string }[] = [
@@ -108,6 +109,7 @@ export function CustomerDetailView({
   onOpenProvisional,
   onOpenFinal,
   onOpenContract,
+  onDeleted,
 }: {
   user: User;
   customer: Customer;
@@ -119,8 +121,10 @@ export function CustomerDetailView({
   onOpenProvisional: (id: string | null) => void;
   onOpenFinal: (target: { id?: string; sourceId?: string }) => void;
   onOpenContract: (target: { id?: string; sourceId?: string }) => void;
+  onDeleted: (target: DeleteTarget) => void;
 }) {
   const [activeTab, setActiveTab] = useState<Tab>("info");
+  const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
   const [printing, setPrinting] = useState<PrintDoc | null>(null);
   const isAdmin = user.role === ROLE_ADMIN;
 
@@ -142,6 +146,11 @@ export function CustomerDetailView({
           <Button variant="secondary" icon={Settings} onClick={onEditCustomer} disabled={readOnly}>
             編集
           </Button>
+          {isAdmin && (
+            <Button variant="secondary" icon={Trash2} className="!text-red-600" onClick={() => setDeleting({ kind: "customer", id: customer.id, label: customer.name })} disabled={readOnly}>
+              削除
+            </Button>
+          )}
           <Button icon={Calculator} onClick={() => onOpenProvisional(null)} disabled={readOnly}>
             仮見積もり作成
           </Button>
@@ -264,6 +273,9 @@ export function CustomerDetailView({
                       <SmallAction disabled={readOnly} onClick={() => onOpenRecord({ id: record.id })}>
                         <Pencil className="w-3.5 h-3.5" /> 編集・飛行記録の追加
                       </SmallAction>
+                      <SmallAction disabled={readOnly} onClick={() => setDeleting({ kind: "record", id: record.id, label: record.title || record.id })} color="text-red-600">
+                        <Trash2 className="w-3.5 h-3.5" /> 削除
+                      </SmallAction>
                       {record.contractId && <span className="text-[11px] text-slate-400">元の契約：{record.contractId}</span>}
                     </div>
                   )}
@@ -320,6 +332,11 @@ export function CustomerDetailView({
                               <FileCheck className="w-3.5 h-3.5" /> この本見積で契約を作成
                             </SmallAction>
                           )}
+                          {isAdmin && (
+                            <SmallAction disabled={readOnly} onClick={() => setDeleting({ kind: "estimate", id: est.id, label: `${est.type || "見積"}「${est.title}」` })} color="text-red-600">
+                              <Trash2 className="w-3.5 h-3.5" /> 削除
+                            </SmallAction>
+                          )}
                         </>
                       }
                     />
@@ -372,6 +389,11 @@ export function CustomerDetailView({
                             <Pencil className="w-3.5 h-3.5" /> {contract.status === "confirmed" ? "詳細" : "編集・契約確定"}
                           </SmallAction>
                         )}
+                        {isAdmin && (
+                          <SmallAction disabled={readOnly} onClick={() => setDeleting({ kind: "contract", id: contract.id, label: `契約「${contract.title}」` })} color="text-red-600">
+                            <Trash2 className="w-3.5 h-3.5" /> 削除
+                          </SmallAction>
+                        )}
                       </div>
                     </Card>
                   ))
@@ -382,6 +404,16 @@ export function CustomerDetailView({
         )}
       </div>
 
+      {deleting && (
+        <DeleteDialog
+          target={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={(t) => {
+            setDeleting(null);
+            onDeleted(t);
+          }}
+        />
+      )}
       {printing && <DocumentPreview doc={printing} customer={customer} config={config} onClose={() => setPrinting(null)} />}
     </div>
   );

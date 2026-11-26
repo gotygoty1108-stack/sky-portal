@@ -42,6 +42,9 @@ export class UserError extends Error {}
 
 let queue: Promise<unknown> = Promise.resolve();
 // Serializes writes inside this process so ID numbering does not collide.
+/** Highest customer number ever issued, so IDs of deleted customers are never reused. */
+export const LAST_CUSTOMER_NO_KEY = "lastCustomerNo";
+
 export function withLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = queue.then(fn, fn);
   queue = run.catch(() => undefined);
@@ -249,7 +252,7 @@ export async function saveCustomer(input: Record<string, unknown>, user: User): 
   // Accounts with a team always register customers for that team; only admins without a team pick one.
   const chooseTeam = isAdmin(user) && !user.team;
   return withLock(async () => {
-    const { Customers } = await backend().readMany(["Customers"]);
+    const { Customers, Settings } = await backend().readMany(["Customers", "Settings"]);
     const existingTeam = id ? str(Customers.rows.find((r) => str(r.id) === id)?.team).trim() : "";
     if (chooseTeam && requested && requested !== existingTeam && teams.length > 0 && !teams.includes(requested)) {
       throw new UserError("チームは一覧から選んでください。");
@@ -259,7 +262,7 @@ export async function saveCustomer(input: Record<string, unknown>, user: User): 
       const maxNo = Customers.rows.reduce((max, r) => {
         const m = /^C-(\d+)$/.exec(str(r.id));
         return m ? Math.max(max, parseInt(m[1], 10)) : max;
-      }, 0);
+      }, Number(Settings.rows.find((r) => str(r.key) === LAST_CUSTOMER_NO_KEY)?.value) || 0);
       const customer: CustomerBase = {
         id: `C-${String(maxNo + 1).padStart(3, "0")}`,
         ...fields,
