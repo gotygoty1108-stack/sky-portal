@@ -38,6 +38,7 @@ export function describeRequest(pathname: string, body: Record<string, unknown>)
   if (pathname === "/api/estimates" && body.type) action = `${s(body.type)}保存`;
   if (pathname === "/api/contracts" && body.confirm) action = "契約確定";
   const target = s(body.id) || s(body.newId) || s(body.customerId);
-  const detail = [s(body.name), s(body.title)].filter(Boolean).join(" / ").slice(0, 200);
+  const renamed = body.newId && body.newId !== body.id ? `ID変更：${s(body.id)}→${s(body.newId)}` : "";
+  const detail = [renamed, s(body.name), s(body.title)].filter(Boolean).join(" / ").slice(0, 200);
   return { action, target, detail };
 }

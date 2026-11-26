@@ -32,7 +32,6 @@ export async function POST(req: Request) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "local";
   const key = `${ip}:${userId}`;
   if (isLoginLocked(key)) {
-    writeLog({ userId, action: "ログイン", detail: ip, result: "失敗：ロック中" });
     return fail("ログインに続けて失敗したため、しばらく時間をおいてから再度お試しください。", 429);
   }
 
