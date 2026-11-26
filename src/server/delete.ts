@@ -1,7 +1,7 @@
 import { backend, type SheetName } from "./backend";
 import { login } from "./accounts";
 import { clearLoginFailures, isLoginLocked, recordLoginFailure } from "./login-limit";
-import { UserError, withLock } from "./portal";
+import { LAST_CUSTOMER_NO_KEY, nowString, UserError, withLock } from "./portal";
 import { ROLE_ADMIN, type User } from "@/lib/types";
 
 export const DELETE_KINDS = { customer: "顧客", estimate: "見積", contract: "契約", record: "業務請負記録" } as const;
@@ -26,12 +26,19 @@ export async function deleteItem(input: Record<string, unknown>, user: User): Pr
   clearLoginFailures(lockKey);
 
   return withLock(async () => {
-    const t = await backend().readMany(["Customers", "Estimates", "Contracts", "Records"]);
+    const t = await backend().readMany(["Customers", "Estimates", "Contracts", "Records", "Settings"]);
     const target = t[SHEET[kind]].rows.find((r) => s(r.id) === id);
     if (!target) throw new UserError("削除する項目が見つかりません。");
 
     const plan: [SheetName, number[]][] = [];
     if (kind === "customer") {
+      const no = Number(/^C-(\d+)$/.exec(id)?.[1]) || 0;
+      const seq = t.Settings.rows.find((r) => s(r.key) === LAST_CUSTOMER_NO_KEY);
+      if (no > (Number(seq?.value) || 0)) {
+        const values = { key: LAST_CUSTOMER_NO_KEY, value: no, updatedAt: nowString() };
+        if (seq) await backend().updateCells("Settings", seq._row, values);
+        else await backend().append("Settings", values);
+      }
       for (const n of ["Estimates", "Contracts", "Records"] as const) {
         plan.push([n, t[n].rows.filter((r) => s(r.customerId) === id).map((r) => r._row)]);
       }
