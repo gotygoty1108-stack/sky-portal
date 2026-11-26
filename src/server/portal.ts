@@ -54,7 +54,7 @@ const num = (v: Cell | undefined) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-function nowString(): string {
+export function nowString(): string {
   const parts = new Intl.DateTimeFormat("ja-JP", {
     timeZone: "Asia/Tokyo",
     year: "numeric",

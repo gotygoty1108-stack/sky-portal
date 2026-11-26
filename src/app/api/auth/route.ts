@@ -4,6 +4,7 @@ import { clearLoginFailures, isLoginLocked, recordLoginFailure } from "@/server/
 import { createSessionToken, currentUser, SESSION_COOKIE, sessionCookieOptions } from "@/server/session";
 import { fail, ok } from "@/server/route-helpers";
 import { SetupError } from "@/server/backend";
+import { writeLog } from "@/server/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -30,15 +31,19 @@ export async function POST(req: Request) {
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "local";
   const key = `${ip}:${userId}`;
-  if (isLoginLocked(key)) return fail("ログインに続けて失敗したため、しばらく時間をおいてから再度お試しください。", 429);
+  if (isLoginLocked(key)) {
+    return fail("ログインに続けて失敗したため、しばらく時間をおいてから再度お試しください。", 429);
+  }
 
   try {
     const result = await login(userId, password);
     if (!result) {
       recordLoginFailure(key);
+      writeLog({ userId, action: "ログイン", detail: ip, result: "失敗：IDまたはパスワード違い" });
       return fail("IDまたはパスワードが間違っています。", 401);
     }
     clearLoginFailures(key);
+    writeLog({ userId: result.user.id, userName: result.user.name, action: "ログイン", detail: ip, result: result.user.mustSetPassword ? "成功（仮パスワード）" : "成功" });
     const res = ok(result.user);
     res.cookies.set(SESSION_COOKIE, await createSessionToken(result.user, result.v), sessionCookieOptions);
     return res;
@@ -50,6 +55,8 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE() {
+  const user = await currentUser().catch(() => null);
+  if (user) writeLog({ userId: user.id, userName: user.name, action: "ログアウト", result: "成功" });
   const res = NextResponse.json({ status: "success", data: null });
   res.cookies.set(SESSION_COOKIE, "", { ...sessionCookieOptions, maxAge: 0 });
   return res;
