@@ -9,7 +9,7 @@ import { Badge, Button, Card } from "./ui";
 const cell = "w-full px-2 py-1.5 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none";
 const ROLE_LABEL: Record<number, string> = { [ROLE_SALES]: "1：営業", [ROLE_ADMIN]: "2：管理者" };
 
-type Draft = { name: string; team: string; role: number };
+type Draft = { name: string; team: string; role: number; newId?: string };
 type Issued = { id: string; name: string; tempPassword: string; reset: boolean };
 
 function TeamSelect({ value, teams, onChange }: { value: string; teams: string[]; onChange: (v: string) => void }) {
@@ -83,6 +83,11 @@ export function AccountsPanel({ teams, currentUserId, readOnly }: { teams: strin
   const update = async (id: string) => {
     const res = await run(() => api<Account>("/api/accounts", { body: { action: "update", id, ...draft } }));
     if (res) {
+      if (id === currentUserId && res.id !== id) {
+        alert(`IDを「${res.id}」に変更しました。新しいIDでログインし直してください。`);
+        location.reload();
+        return;
+      }
       setAccounts((prev) => (prev || []).map((a) => (a.id === id ? res : a)));
       setEditing(null);
     }
@@ -176,7 +181,9 @@ export function AccountsPanel({ teams, currentUserId, readOnly }: { teams: strin
               {(accounts || []).map((a) =>
                 editing === a.id ? (
                   <tr key={a.id} className="bg-blue-50/50">
-                    <td className="py-2 font-mono">{a.id}</td>
+                    <td className="py-2 pr-2">
+                      <input className={`${cell} font-mono`} value={draft.newId ?? a.id} onChange={(e) => setDraft({ ...draft, newId: e.target.value })} aria-label="ID" />
+                    </td>
                     <td className="py-2 pr-2">
                       <input className={cell} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
                     </td>

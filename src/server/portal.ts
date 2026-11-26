@@ -18,6 +18,9 @@ import {
 import { byNewest } from "@/lib/format";
 import {
   adjustRange,
+  currentTier,
+  tierPrice,
+  validAnswerPrefix,
   FLOW_CATEGORIES,
   maxCategory,
   parseConfig,
@@ -355,12 +358,27 @@ const cleanNum = (v: unknown, min: number, max: number) => {
 const list = (v: unknown, max: number): Record<string, unknown>[] =>
   Array.isArray(v) ? v.slice(0, max).filter((x) => x && typeof x === "object") : [];
 
+function cleanTierPrices(v: unknown): Record<string, number> {
+  if (!v || typeof v !== "object") return {};
+  const out: Record<string, number> = {};
+  for (const [k, n] of Object.entries(v as Record<string, unknown>).slice(0, 20)) {
+    const id = cleanId(k);
+    if (id && n !== "" && n !== null && Number.isFinite(Number(n))) out[id] = Math.round(cleanNum(n, 0, 100_000_000));
+  }
+  return out;
+}
+
 function cleanConfig(input: Record<string, unknown>): EstimateConfig {
   const config: EstimateConfig = {
     companyName: cleanText(input.companyName, 100),
     companyInfo: cleanText(input.companyInfo, 500),
     taxRate: cleanNum(input.taxRate, 0, 0.5),
     salesAdjustPct: cleanNum(input.salesAdjustPct, 0, 100),
+    salesDiscountPct: cleanNum(input.salesDiscountPct ?? input.salesAdjustPct, 0, 100),
+    salesMarkupPct: cleanNum(input.salesMarkupPct ?? input.salesAdjustPct, 0, 1000),
+    tiers: list(input.tiers, 20)
+      .map((t) => ({ id: cleanId(t.id), label: cleanText(t.label, 50), note: cleanText(t.note, 2000) }))
+      .filter((t) => t.id && t.label),
     estimateNotes: cleanText(input.estimateNotes, 2000),
     contractTerms: cleanText(input.contractTerms, 10000),
     teams: [...new Set((Array.isArray(input.teams) ? input.teams : []).slice(0, 100).map((t) => cleanText(t, 50)).filter(Boolean))],
@@ -377,6 +395,7 @@ function cleanConfig(input: Record<string, unknown>): EstimateConfig {
         defaultQty: cleanNum(i.defaultQty, 0, 999),
         group: GROUPS.includes(i.group as PriceGroup) ? (i.group as PriceGroup) : "option",
         plan: cleanId(i.plan),
+        tierPrices: cleanTierPrices(i.tierPrices),
       }))
       .filter((i) => i.id && i.name),
     questions: list(input.questions, 50)
@@ -386,6 +405,9 @@ function cleanConfig(input: Record<string, unknown>): EstimateConfig {
         title: cleanText(q.title, 200),
         help: cleanText(q.help, 500),
         branchOnly: q.branchOnly === true,
+        multiple: q.multiple === true,
+        showCategories: Array.isArray(q.showCategories) ? [...new Set(q.showCategories.map(cleanCategory))] : [],
+        showIfAny: Array.isArray(q.showIfAny) ? q.showIfAny.slice(0, 50).map((k) => cleanText(k, 90).replace(/[^\w:-]/g, "")).filter(Boolean) : [],
         options: list(q.options, 30)
           .map((o) => ({
             id: cleanId(o.id),
@@ -396,11 +418,18 @@ function cleanConfig(input: Record<string, unknown>): EstimateConfig {
             note: cleanText(o.note, 500),
             addItems: Array.isArray(o.addItems) ? o.addItems.slice(0, 20).map(cleanId).filter(Boolean) : [],
             next: cleanId(o.next),
+            tier: cleanId(o.tier),
           }))
           .filter((o) => o.id && o.label),
       }))
       .filter((q) => q.id && q.title),
   };
+  const tierIds = new Set(config.tiers.map((t) => t.id));
+  for (const i of config.priceItems) {
+    i.tierPrices = Object.fromEntries(Object.entries(i.tierPrices || {}).filter(([k]) => tierIds.has(k)));
+  }
+  for (const q of config.questions) for (const o of q.options) if (o.tier && !tierIds.has(o.tier)) o.tier = "";
+  config.salesAdjustPct = Math.max(config.salesDiscountPct, Math.min(100, config.salesMarkupPct));
   if (config.questions.length === 0) throw new UserError("飛行条件の質問を1つ以上登録してください。");
   const ids = new Set(config.questions.map((q) => q.id));
   if (ids.size !== config.questions.length) throw new UserError("質問のIDが重複しています。");
@@ -459,7 +488,7 @@ function cleanCategory(v: unknown): number {
 }
 
 // Sales accounts may only move catalog prices within the configured range.
-function applyPriceRules(lines: Line[], config: EstimateConfig, user: User): Line[] {
+function applyPriceRules(lines: Line[], config: EstimateConfig, user: User, tier: string): Line[] {
   const catalog = new Map(config.priceItems.map((i) => [i.id, i]));
   return lines.map((l) => {
     const item = l.itemId ? catalog.get(l.itemId) : undefined;
@@ -469,9 +498,10 @@ function applyPriceRules(lines: Line[], config: EstimateConfig, user: User): Lin
       if (!isAdmin(user) && rest.discount) throw new UserError("値引き行の追加は管理者のみ可能です。");
       return rest;
     }
-    const line = { ...l, basePrice: item.unitPrice };
+    const price = tierPrice(item, tier);
+    const line = { ...l, basePrice: price };
     if (!isAdmin(user)) {
-      const [min, max] = adjustRange(item.unitPrice, config.salesAdjustPct);
+      const [min, max] = adjustRange(price, config.salesDiscountPct, config.salesMarkupPct);
       if (line.unitPrice < min || line.unitPrice > max) {
         throw new UserError(`「${item.name}」の単価は ${min.toLocaleString()}〜${max.toLocaleString()} 円の範囲で設定してください。`);
       }
@@ -499,14 +529,15 @@ export async function saveEstimate(input: Record<string, unknown>, user: User): 
   const title = cleanText(input.title) || (type === "仮見積" ? "ドローン業務 仮見積書" : "ドローン業務 御見積書");
   const raw = (input.data && typeof input.data === "object" ? input.data : {}) as Record<string, unknown>;
   const config = await getSettings();
-  const lines = applyPriceRules(cleanLines(raw.lines), config, user);
-  if (lines.length === 0) throw new UserError("見積項目を1つ以上入力してください。");
   // Provisional verdicts/categories come from the configured options, not from the request.
   const answers = cleanAnswers(raw.answers).map((a) => {
     if (type !== "仮見積") return a;
     const opt = config.questions.find((q) => q.id === a.questionId)?.options.find((o) => o.id === a.optionId);
     return opt ? { ...a, verdict: opt.verdict, flightCategory: opt.flightCategory } : a;
   });
+  const tier = type === "仮見積" ? currentTier(config, validAnswerPrefix(config, answers)) : cleanId(raw.tier);
+  const lines = applyPriceRules(cleanLines(raw.lines), config, user, tier);
+  if (lines.length === 0) throw new UserError("見積項目を1つ以上入力してください。");
   const verdict: Verdict = type === "仮見積" ? worstVerdict(answers) : VERDICTS.includes(raw.verdict as Verdict) ? (raw.verdict as Verdict) : "ok";
   if (type === "仮見積" && verdict === "ng") throw new UserError("飛行不可の条件が含まれるため、仮見積を作成できません。");
   const data: EstimateData = {
@@ -514,6 +545,7 @@ export async function saveEstimate(input: Record<string, unknown>, user: User): 
     verdict,
     flightCategory: type === "仮見積" || raw.flightCategory === undefined ? maxCategory(answers) : cleanCategory(raw.flightCategory),
     planId: cleanId(raw.planId),
+    tier,
     lines,
     location: cleanText(raw.location, 300),
     workDate: cleanText(raw.workDate, 100),

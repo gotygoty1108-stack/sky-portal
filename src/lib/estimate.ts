@@ -26,6 +26,8 @@ export type FlowOption = {
   addItems: string[];
   /** Next question id. "" = the next question in list order, "end" = finish the check. */
   next: string;
+  /** Customer tier id applied when this option is chosen (switches prices and printed terms). */
+  tier?: string;
 };
 
 export type FlowQuestion = {
@@ -35,8 +37,17 @@ export type FlowQuestion = {
   help: string;
   /** Shown only when an option jumps to it via `next` (e.g. follow-up questions). */
   branchOnly?: boolean;
+  /** Several options can be chosen at once. */
+  multiple?: boolean;
+  /** Shown only when the category so far is one of these (empty = always). */
+  showCategories?: number[];
+  /** Shown only when one of these earlier choices ("questionId:optionId") was made (empty = always). */
+  showIfAny?: string[];
   options: FlowOption[];
 };
+
+/** Customer tier (e.g. 通常・法人 / 教育・非営利) with its own prices and printed special terms. */
+export type Tier = { id: string; label: string; note: string };
 
 export type PriceGroup = "base" | "option" | "flow";
 export const PRICE_GROUP_LABEL: Record<PriceGroup, string> = {
@@ -55,6 +66,8 @@ export type PriceItem = {
   group: PriceGroup;
   /** Plan id this item belongs to; "" = all plans. */
   plan: string;
+  /** Unit price per customer tier id; missing = unitPrice. */
+  tierPrices?: Record<string, number>;
 };
 
 export type Plan = { id: string; label: string; description: string };
@@ -65,6 +78,11 @@ export type EstimateConfig = {
   taxRate: number;
   /** Sales accounts may change catalog unit prices within ±this percent. */
   salesAdjustPct: number;
+  /** Sales may lower catalog prices by up to this percent. */
+  salesDiscountPct: number;
+  /** Sales may raise catalog prices by up to this percent. */
+  salesMarkupPct: number;
+  tiers: Tier[];
   estimateNotes: string;
   contractTerms: string;
   plans: Plan[];
@@ -100,6 +118,7 @@ export type EstimateData = {
   verdict?: Verdict;
   flightCategory?: number;
   planId?: string;
+  tier?: string;
   lines: Line[];
   location?: string;
   workDate?: string;
@@ -154,6 +173,9 @@ export const DEFAULT_CONFIG: EstimateConfig = {
   companyInfo: "〒000-0000 住所を管理者画面で設定してください\nTEL 00-0000-0000",
   taxRate: 0.1,
   salesAdjustPct: 10,
+  salesDiscountPct: 10,
+  salesMarkupPct: 10,
+  tiers: [],
   estimateNotes: "※本書は概算です。飛行条件の確認後、正式なお見積り（本見積）をお送りします。\n※交通費・宿泊費等の実費は別途ご請求となる場合があります。",
   contractTerms: [
     "第1条（業務内容） 受託者は、本契約書記載の業務を誠実に遂行する。",
@@ -261,15 +283,88 @@ export function parseConfig(raw: unknown): EstimateConfig {
       options: q.options.map((o) => ({ ...o, flightCategory: typeof o.flightCategory === "number" ? o.flightCategory : defaultCategory(o.verdict) })),
     })),
     teams: Array.isArray(c.teams) ? c.teams : [],
+    tiers: Array.isArray(c.tiers) ? c.tiers : [],
+    salesDiscountPct: typeof c.salesDiscountPct === "number" ? c.salesDiscountPct : (c.salesAdjustPct ?? DEFAULT_CONFIG.salesAdjustPct),
+    salesMarkupPct: typeof c.salesMarkupPct === "number" ? c.salesMarkupPct : (c.salesAdjustPct ?? DEFAULT_CONFIG.salesAdjustPct),
   };
 }
 
+const answerKey = (questionId: string, optionId: string) => `${questionId}:${optionId}`;
+
+/** Whether a question's display conditions hold for the answers so far. */
+export function questionVisible(q: FlowQuestion, answers: FlowAnswer[]): boolean {
+  if (q.showCategories?.length && !q.showCategories.includes(maxCategory(answers))) return false;
+  if (q.showIfAny?.length) {
+    const chosen = new Set(answers.map((a) => answerKey(a.questionId, a.optionId)));
+    if (!q.showIfAny.some((k) => chosen.has(k))) return false;
+  }
+  return true;
+}
+
+function firstVisibleFrom(config: EstimateConfig, start: number, answers: FlowAnswer[], allowBranch: boolean): FlowQuestion | null {
+  for (let i = start; i < config.questions.length; i++) {
+    const q = config.questions[i];
+    if ((allowBranch && i === start) || !q.branchOnly) {
+      if (questionVisible(q, answers)) return q;
+    }
+  }
+  return null;
+}
+
+export function firstQuestion(config: EstimateConfig): FlowQuestion | null {
+  return firstVisibleFrom(config, 0, [], false);
+}
+
+/** Options chosen for the last answered question (a multi-select question yields several). */
+export function lastChoice(config: EstimateConfig, answers: FlowAnswer[]): { question: FlowQuestion; options: FlowOption[] } | null {
+  const last = answers[answers.length - 1];
+  const question = last && config.questions.find((q) => q.id === last.questionId);
+  if (!question) return null;
+  const ids = new Set(answers.slice(answers.findIndex((a) => a.questionId === last.questionId)).map((a) => a.optionId));
+  const options = question.options.filter((o) => ids.has(o.id));
+  return options.length ? { question, options } : null;
+}
+
+/** Longest prefix of answers that follows the configured flow (order, visibility, single/multi choice). */
+export function validAnswerPrefix(config: EstimateConfig, answers: FlowAnswer[]): FlowAnswer[] {
+  let expected = firstQuestion(config);
+  let i = 0;
+  while (expected && i < answers.length) {
+    const q = expected;
+    let j = i;
+    while (j < answers.length && answers[j].questionId === q.id) j++;
+    const group = answers.slice(i, j);
+    const options = group.map((a) => q.options.find((o) => o.id === a.optionId));
+    if (group.length === 0 || (!q.multiple && group.length > 1) || options.some((o) => !o) || new Set(group.map((a) => a.optionId)).size !== group.length) break;
+    i = j;
+    expected = nextQuestion(config, q, options as FlowOption[], answers.slice(0, i));
+  }
+  return answers.slice(0, i);
+}
+
+/** The tier set by the latest answer that sets one ("" = none). */
+export function currentTier(config: EstimateConfig, answers: FlowAnswer[]): string {
+  let tier = "";
+  for (const a of answers) {
+    const o = config.questions.find((q) => q.id === a.questionId)?.options.find((op) => op.id === a.optionId);
+    if (o?.tier) tier = o.tier;
+  }
+  return tier;
+}
+
+export function tierPrice(item: PriceItem, tier: string | undefined): number {
+  const p = tier ? item.tierPrices?.[tier] : undefined;
+  return typeof p === "number" ? p : item.unitPrice;
+}
+
 /** Next question after choosing `option` on `question`, or null when the check is finished. */
-export function nextQuestion(config: EstimateConfig, question: FlowQuestion, option: FlowOption): FlowQuestion | null {
-  if (option.verdict === "ng" || option.next === "end") return null;
-  if (option.next) return config.questions.find((q) => q.id === option.next) || null;
+export function nextQuestion(config: EstimateConfig, question: FlowQuestion, chosen: FlowOption[], answers: FlowAnswer[]): FlowQuestion | null {
+  if (chosen.some((o) => o.verdict === "ng" || o.next === "end")) return null;
+  const jump = chosen.find((o) => o.next)?.next;
+  const target = jump ? config.questions.findIndex((q) => q.id === jump) : -1;
+  if (target >= 0) return firstVisibleFrom(config, target, answers, true);
   const idx = config.questions.findIndex((q) => q.id === question.id);
-  return config.questions.slice(idx + 1).find((q) => !q.branchOnly) || null;
+  return firstVisibleFrom(config, idx + 1, answers, false);
 }
 
 export function worstVerdict(answers: { verdict: Verdict }[]): Verdict {
@@ -287,12 +382,13 @@ export function withTax(subtotal: number, rate = 0.1) {
   return { tax, total: subtotal + tax };
 }
 
-export function adjustRange(basePrice: number, pct: number): [number, number] {
-  return [Math.ceil(basePrice * (1 - pct / 100)), Math.floor(basePrice * (1 + pct / 100))];
+export function adjustRange(basePrice: number, downPct: number, upPct: number): [number, number] {
+  return [Math.ceil(basePrice * (1 - downPct / 100)), Math.floor(basePrice * (1 + upPct / 100))];
 }
 
-export function itemToLine(item: PriceItem, qty = item.defaultQty): Line {
-  return { itemId: item.id, name: item.name, basePrice: item.unitPrice, unitPrice: item.unitPrice, qty, unit: item.unit };
+export function itemToLine(item: PriceItem, qty = item.defaultQty, tier?: string): Line {
+  const price = tierPrice(item, tier);
+  return { itemId: item.id, name: item.name, basePrice: price, unitPrice: price, qty, unit: item.unit };
 }
 
 export const newKey = () => Math.random().toString(36).slice(2, 8);

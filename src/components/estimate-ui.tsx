@@ -59,12 +59,14 @@ export function LineEditor({
   config,
   mode,
   disabled,
+  tier,
 }: {
   lines: Line[];
   onChange: (lines: Line[]) => void;
   config: EstimateConfig;
   mode: "sales" | "admin";
   disabled?: boolean;
+  tier?: string;
 }) {
   const [pick, setPick] = useState("");
   const catalog = new Map(config.priceItems.map((i) => [i.id, i]));
@@ -79,7 +81,7 @@ export function LineEditor({
   };
   const addCatalog = () => {
     const item = catalog.get(pick);
-    if (item) onChange([...lines, itemToLine(item, item.defaultQty || 1)]);
+    if (item) onChange([...lines, itemToLine(item, item.defaultQty || 1, tier)]);
     setPick("");
   };
   const addPercentDiscount = () => {
@@ -106,7 +108,7 @@ export function LineEditor({
           <tbody className="divide-y divide-slate-100">
             {lines.map((l, idx) => {
               const item = l.itemId ? catalog.get(l.itemId) : undefined;
-              const range = mode === "sales" && item ? adjustRange(item.unitPrice, config.salesAdjustPct) : null;
+              const range = mode === "sales" && item ? adjustRange(l.basePrice ?? item.unitPrice, config.salesDiscountPct, config.salesMarkupPct) : null;
               const out = range && (l.unitPrice < range[0] || l.unitPrice > range[1]);
               const lockName = mode === "sales" && !!item;
               return (
@@ -305,6 +307,7 @@ export function DocumentPreview({ doc, customer, config, onClose }: { doc: Print
   const { tax, total } = withTax(subtotal, config.taxRate);
   const isContract = doc.kind === "contract";
 
+  const tierNote = doc.kind !== "contract" ? config.tiers.find((t) => t.id === doc.data.tier)?.note || "" : "";
   return createPortal(
     <div className="print-root fixed inset-0 z-[90] bg-slate-500/80 overflow-auto">
       <div className="no-print sticky top-0 z-10 bg-slate-900 text-white px-4 py-3 flex items-center justify-between gap-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
@@ -455,6 +458,12 @@ export function DocumentPreview({ doc, customer, config, onClose }: { doc: Print
           </div>
         )}
 
+        {doc.kind !== "contract" && tierNote && (
+          <div className="mb-5 text-[12px] print-avoid-break">
+            <h2 className="font-bold text-sm border-l-4 border-slate-800 pl-2 mb-2">特約事項</h2>
+            <p className="whitespace-pre-wrap">{tierNote}</p>
+          </div>
+        )}
         {doc.kind !== "contract" && (config.estimateNotes || doc.data.memo) && (
           <div className="text-[12px] text-slate-700 whitespace-pre-wrap border-t border-slate-300 pt-3 print-avoid-break">
             {doc.kind === "final" && doc.data.memo ? `${doc.data.memo}\n` : ""}

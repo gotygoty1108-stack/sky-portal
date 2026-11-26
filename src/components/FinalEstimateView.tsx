@@ -56,7 +56,7 @@ export function FinalEstimateView({
   const [savedId, setSavedId] = useState(initial?.id || "");
   const sourceId = initial?.sourceId || source?.id || "";
 
-  const data: EstimateData = { answers, verdict, flightCategory, planId: base?.planId || "", lines, location, workDate, validUntil, memo, judgeMemo };
+  const data: EstimateData = { answers, verdict, flightCategory, planId: base?.planId || "", tier: base?.tier || "", lines, location, workDate, validUntil, memo, judgeMemo };
 
   const handleSave = async () => {
     if (verdict === "ng" && !confirm("飛行判定が「飛行不可」のままです。保存しますか？")) return;
@@ -142,7 +142,7 @@ export function FinalEstimateView({
           </Section>
 
           <Section icon={<ClipboardList className="w-5 h-5" />} title="2. 見積項目（自由に追加・編集・値引きできます）">
-            <LineEditor lines={lines} onChange={setLines} config={config} mode="admin" disabled={readOnly} />
+            <LineEditor lines={lines} onChange={setLines} config={config} mode="admin" disabled={readOnly} tier={base?.tier} />
           </Section>
 
           <Section icon={<ClipboardList className="w-5 h-5" />} title="3. 見積書の情報">
