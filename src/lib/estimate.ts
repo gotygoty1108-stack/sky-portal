@@ -325,6 +325,23 @@ export function lastChoice(config: EstimateConfig, answers: FlowAnswer[]): { que
   return options.length ? { question, options } : null;
 }
 
+/** Longest prefix of answers that follows the configured flow (order, visibility, single/multi choice). */
+export function validAnswerPrefix(config: EstimateConfig, answers: FlowAnswer[]): FlowAnswer[] {
+  let expected = firstQuestion(config);
+  let i = 0;
+  while (expected && i < answers.length) {
+    const q = expected;
+    let j = i;
+    while (j < answers.length && answers[j].questionId === q.id) j++;
+    const group = answers.slice(i, j);
+    const options = group.map((a) => q.options.find((o) => o.id === a.optionId));
+    if (group.length === 0 || (!q.multiple && group.length > 1) || options.some((o) => !o) || new Set(group.map((a) => a.optionId)).size !== group.length) break;
+    i = j;
+    expected = nextQuestion(config, q, options as FlowOption[], answers.slice(0, i));
+  }
+  return answers.slice(0, i);
+}
+
 /** The tier set by the latest answer that sets one ("" = none). */
 export function currentTier(config: EstimateConfig, answers: FlowAnswer[]): string {
   let tier = "";

@@ -20,6 +20,7 @@ import {
   adjustRange,
   currentTier,
   tierPrice,
+  validAnswerPrefix,
   FLOW_CATEGORIES,
   maxCategory,
   parseConfig,
@@ -534,7 +535,7 @@ export async function saveEstimate(input: Record<string, unknown>, user: User): 
     const opt = config.questions.find((q) => q.id === a.questionId)?.options.find((o) => o.id === a.optionId);
     return opt ? { ...a, verdict: opt.verdict, flightCategory: opt.flightCategory } : a;
   });
-  const tier = type === "仮見積" ? currentTier(config, answers) : cleanId(raw.tier);
+  const tier = type === "仮見積" ? currentTier(config, validAnswerPrefix(config, answers)) : cleanId(raw.tier);
   const lines = applyPriceRules(cleanLines(raw.lines), config, user, tier);
   if (lines.length === 0) throw new UserError("見積項目を1つ以上入力してください。");
   const verdict: Verdict = type === "仮見積" ? worstVerdict(answers) : VERDICTS.includes(raw.verdict as Verdict) ? (raw.verdict as Verdict) : "ok";
