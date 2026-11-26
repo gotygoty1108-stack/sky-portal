@@ -26,6 +26,8 @@ export interface Backend {
   readMany(names: SheetName[]): Promise<Record<string, Table>>;
   append(name: SheetName, values: Record<string, Cell>): Promise<void>;
   updateCells(name: SheetName, row: number, values: Record<string, Cell>): Promise<void>;
+  /** Deletes the given 1-based sheet rows (one call per sheet, so row numbers stay valid). */
+  deleteRows(name: SheetName, rows: number[]): Promise<void>;
 }
 
 function toTable(grid: Cell[][]): Table {
@@ -240,9 +242,25 @@ class SheetsBackend implements Backend {
       body: JSON.stringify({ valueInputOption: "RAW", data }),
     });
   }
+
+  async deleteRows(name: SheetName, rows: number[]): Promise<void> {
+    if (rows.length === 0) return;
+    await this.ensureSheets();
+    const meta = this.sheetMeta.get(name);
+    if (!meta) throw new Error(`sheet ${name} not found`);
+    await this.api(":batchUpdate", {
+      method: "POST",
+      body: JSON.stringify({
+        requests: [...new Set(rows)]
+          .sort((a, b) => b - a)
+          .map((r) => ({ deleteDimension: { range: { sheetId: meta.sheetId, dimension: "ROWS", startIndex: r - 1, endIndex: r } } })),
+      }),
+    });
+  }
 }
 
 // ---------- Local mock (development only) ----------
+const descending = (rows: number[]) => [...new Set(rows)].sort((a, b) => b - a);
 
 const MOCK_FILE = path.join(process.cwd(), ".data", "mock-db.json");
 
@@ -301,6 +319,12 @@ class MockBackend implements Backend {
       const col = headers.indexOf(k);
       if (col >= 0 && grid[row - 1]) grid[row - 1][col] = v;
     }
+    await this.save();
+  }
+
+  async deleteRows(name: SheetName, rows: number[]) {
+    const db = await this.load();
+    for (const r of descending(rows)) if (r > 1) db[name]?.splice(r - 1, 1);
     await this.save();
   }
 }

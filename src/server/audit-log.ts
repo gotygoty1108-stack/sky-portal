@@ -26,7 +26,10 @@ const ACTIONS: Record<string, string> = {
   "/api/settings": "管理者設定保存",
   "/api/accounts": "アカウント操作",
   "/api/auth/password": "パスワード登録",
+  "/api/delete": "削除",
 };
+
+const DELETE_LABEL: Record<string, string> = { customer: "顧客", estimate: "見積", contract: "契約", record: "業務請負記録" };
 
 const ACCOUNT_ACTIONS: Record<string, string> = { create: "アカウント作成", update: "アカウント編集", reset: "パスワード初期化" };
 
@@ -37,6 +40,7 @@ export function describeRequest(pathname: string, body: Record<string, unknown>)
   if (pathname === "/api/accounts") action = ACCOUNT_ACTIONS[s(body.action)] || action;
   if (pathname === "/api/estimates" && body.type) action = `${s(body.type)}保存`;
   if (pathname === "/api/contracts" && body.confirm) action = "契約確定";
+  if (pathname === "/api/delete") action = `削除（${DELETE_LABEL[s(body.kind)] || s(body.kind)}）・権限確認ID：${s(body.adminId)}`;
   const target = s(body.id) || s(body.newId) || s(body.customerId);
   const [oldId, newId] = [s(body.id).trim(), s(body.newId).trim()];
   const renamed = newId && newId !== oldId ? `ID変更：${oldId}→${newId}` : "";
