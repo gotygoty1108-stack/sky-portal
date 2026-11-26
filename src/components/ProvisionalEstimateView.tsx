@@ -11,6 +11,7 @@ import {
   firstQuestion,
   lastChoice,
   currentTier,
+  rebaseLines,
   sortLines,
   withTierDiscount,
   worstVerdict,
@@ -75,7 +76,7 @@ export function ProvisionalEstimateView({
   const [answers, setAnswers] = useState<FlowAnswer[]>(initial?.data.answers || []);
   const [planId, setPlanId] = useState(initial?.data.planId ?? firstPlan);
   const [lines, setLines] = useState<Line[]>(
-    () => initial?.data.lines.filter((l) => !l.auto) || config.priceItems.filter((i) => i.group === "base" && (!i.plan || i.plan === firstPlan)).map((i) => itemToLine(i)),
+    () => (initial ? rebaseLines(initial.data.lines, config) : null) || config.priceItems.filter((i) => i.group === "base" && (!i.plan || i.plan === firstPlan)).map((i) => itemToLine(i)),
   );
   const [title, setTitle] = useState(initial?.title || "ドローン業務 仮見積書");
   const [date, setDate] = useState(initial ? toInputDate(initial.date) : todayInput());

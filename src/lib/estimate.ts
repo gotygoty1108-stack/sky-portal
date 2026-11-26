@@ -92,6 +92,23 @@ export function sortLines(lines: Line[], config: EstimateConfig): Line[] {
   return lines.map((l, i) => ({ l, i, r: rank(l) })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.l);
 }
 
+/**
+ * Moves saved catalog lines onto the current standard price, keeping the sales adjustment
+ * (unitPrice − basePrice). Older estimates were priced at the tier price; the tier discount
+ * is then recalculated by `withTierDiscount`, so it is never applied twice.
+ */
+export function rebaseLines(lines: Line[], config: EstimateConfig): Line[] {
+  const catalog = new Map(config.priceItems.map((i) => [i.id, i]));
+  return lines
+    .filter((l) => !l.auto)
+    .map((l) => {
+      const item = !l.discount && l.itemId ? catalog.get(l.itemId) : undefined;
+      if (!item || l.basePrice === item.unitPrice) return l;
+      const adjust = typeof l.basePrice === "number" ? l.unitPrice - l.basePrice : 0;
+      return { ...l, basePrice: item.unitPrice, unitPrice: Math.max(0, item.unitPrice + adjust) };
+    });
+}
+
 /** Replaces the generated tier-discount line: Σ (standard − tier price) × qty over catalog lines. */
 export function withTierDiscount(lines: Line[], config: EstimateConfig, tier: string): Line[] {
   const rest = lines.filter((l) => !l.auto);
