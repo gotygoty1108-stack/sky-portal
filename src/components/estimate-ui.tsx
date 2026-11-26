@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowLeft, ArrowUp, Plus, Printer, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Plus, Printer, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { formatDate, yen } from "@/lib/format";
@@ -8,6 +8,7 @@ import {
   adjustRange,
   CATEGORY_LABEL,
   itemToLine,
+  sortLines,
   sortAnswers,
   lineSubtotal,
   PRICE_GROUP_LABEL,
@@ -59,14 +60,12 @@ export function LineEditor({
   config,
   mode,
   disabled,
-  tier,
 }: {
   lines: Line[];
   onChange: (lines: Line[]) => void;
   config: EstimateConfig;
   mode: "sales" | "admin";
   disabled?: boolean;
-  tier?: string;
 }) {
   const [pick, setPick] = useState("");
   const catalog = new Map(config.priceItems.map((i) => [i.id, i]));
@@ -81,7 +80,7 @@ export function LineEditor({
   };
   const addCatalog = () => {
     const item = catalog.get(pick);
-    if (item) onChange([...lines, itemToLine(item, item.defaultQty || 1, tier)]);
+    if (item) onChange(sortLines([...lines, itemToLine(item, item.defaultQty || 1)], config));
     setPick("");
   };
   const addPercentDiscount = () => {
@@ -110,14 +109,16 @@ export function LineEditor({
               const item = l.itemId ? catalog.get(l.itemId) : undefined;
               const range = mode === "sales" && item ? adjustRange(l.basePrice ?? item.unitPrice, config.salesDiscountPct, config.salesMarkupPct) : null;
               const out = range && (l.unitPrice < range[0] || l.unitPrice > range[1]);
-              const lockName = mode === "sales" && !!item;
+              const locked = mode === "sales" && !!l.auto;
+              const lockName = (mode === "sales" && !!item) || locked;
+              const rowDisabled = disabled || locked;
               return (
                 <tr key={idx} className={l.discount ? "bg-red-50/40" : ""}>
                   <td className="py-2 pr-2">
                     {lockName ? (
                       <span className="font-medium text-slate-800">{l.name}</span>
                     ) : (
-                      <input className={smallInput} value={l.name} onChange={(e) => set(idx, { name: e.target.value })} disabled={disabled} />
+                      <input className={smallInput} value={l.name} onChange={(e) => set(idx, { name: e.target.value })} disabled={rowDisabled} />
                     )}
                     {l.discount && <span className="text-xs text-red-600 font-bold">値引き</span>}
                   </td>
@@ -129,7 +130,7 @@ export function LineEditor({
                       className={`${smallInput} text-right ${out ? "border-red-500 bg-red-50" : ""}`}
                       value={l.unitPrice}
                       onChange={(e) => set(idx, { unitPrice: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
-                      disabled={disabled}
+                      disabled={rowDisabled}
                     />
                     {range && (
                       <div className={`text-[11px] mt-0.5 ${out ? "text-red-600 font-bold" : "text-slate-400"}`}>
@@ -146,21 +147,21 @@ export function LineEditor({
                       className={`${smallInput} text-right`}
                       value={l.qty}
                       onChange={(e) => set(idx, { qty: Math.max(0, Number(e.target.value) || 0) })}
-                      disabled={disabled}
+                      disabled={rowDisabled}
                     />
                   </td>
                   <td className="py-2 pl-2 align-top">
-                    <input className={smallInput} value={l.unit} onChange={(e) => set(idx, { unit: e.target.value })} disabled={disabled || lockName} />
+                    <input className={smallInput} value={l.unit} onChange={(e) => set(idx, { unit: e.target.value })} disabled={rowDisabled || lockName} />
                   </td>
                   <td className={`py-2 text-right font-bold whitespace-nowrap align-top pt-3.5 ${l.discount ? "text-red-600" : "text-slate-800"}`}>{yen(lineSubtotal(l))}</td>
                   <td className="py-2 text-right align-top whitespace-nowrap">
-                    <button type="button" onClick={() => move(idx, -1)} disabled={disabled || idx === 0} className="p-1 text-slate-400 hover:text-blue-600 disabled:opacity-30" aria-label="上へ">
+                    <button type="button" onClick={() => move(idx, -1)} disabled={rowDisabled || idx === 0} className="p-1 text-slate-400 hover:text-blue-600 disabled:opacity-30" aria-label="上へ">
                       <ArrowUp className="w-4 h-4" />
                     </button>
-                    <button type="button" onClick={() => move(idx, 1)} disabled={disabled || idx === lines.length - 1} className="p-1 text-slate-400 hover:text-blue-600 disabled:opacity-30" aria-label="下へ">
+                    <button type="button" onClick={() => move(idx, 1)} disabled={rowDisabled || idx === lines.length - 1} className="p-1 text-slate-400 hover:text-blue-600 disabled:opacity-30" aria-label="下へ">
                       <ArrowDown className="w-4 h-4" />
                     </button>
-                    <button type="button" onClick={() => remove(idx)} disabled={disabled} className="p-2 text-slate-400 hover:text-red-600" aria-label="削除">
+                    <button type="button" onClick={() => remove(idx)} disabled={rowDisabled} className="p-2 text-slate-400 hover:text-red-600" aria-label="削除">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </td>
@@ -198,6 +199,9 @@ export function LineEditor({
           </Button>
           <Button variant="secondary" icon={Plus} onClick={() => onChange([...lines, { name: "", unitPrice: 0, qty: 1, unit: "式" }])}>
             自由項目
+          </Button>
+          <Button variant="secondary" icon={ArrowUpDown} onClick={() => onChange(sortLines(lines, config))}>
+            並べ替え
           </Button>
           {mode === "admin" && (
             <>

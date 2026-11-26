@@ -3,6 +3,10 @@
 import { ArrowDown, ArrowUp, Plus, RotateCcw, Save, Settings, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import {
+  itemSortGroup,
+  SORT_GROUPS,
+  SORT_GROUP_LABEL,
+  type SortGroup,
   CATEGORY_LABEL,
   DEFAULT_CONFIG,
   FLOW_CATEGORIES,
@@ -393,6 +397,7 @@ export function AdminSettingsView({
                   <th className="py-2 w-20">初期数量</th>
                   <th className="py-2 w-40">区分</th>
                   <th className="py-2 w-32">プラン</th>
+                  <th className="py-2 w-28">並び順</th>
                   <th className="w-10" />
                 </tr>
               </thead>
@@ -444,6 +449,15 @@ export function AdminSettingsView({
                         {draft.plans.map((p) => (
                           <option key={p.id} value={p.id}>
                             {p.label}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="py-2 px-1">
+                      <select className={cell} value={itemSortGroup(it)} onChange={(e) => setItem(i, { sortGroup: e.target.value as SortGroup })}>
+                        {SORT_GROUPS.map((g) => (
+                          <option key={g} value={g}>
+                            {SORT_GROUP_LABEL[g]}
                           </option>
                         ))}
                       </select>
