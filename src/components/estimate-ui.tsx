@@ -59,12 +59,14 @@ export function LineEditor({
   config,
   mode,
   disabled,
+  tier,
 }: {
   lines: Line[];
   onChange: (lines: Line[]) => void;
   config: EstimateConfig;
   mode: "sales" | "admin";
   disabled?: boolean;
+  tier?: string;
 }) {
   const [pick, setPick] = useState("");
   const catalog = new Map(config.priceItems.map((i) => [i.id, i]));
@@ -79,7 +81,7 @@ export function LineEditor({
   };
   const addCatalog = () => {
     const item = catalog.get(pick);
-    if (item) onChange([...lines, itemToLine(item, item.defaultQty || 1)]);
+    if (item) onChange([...lines, itemToLine(item, item.defaultQty || 1, tier)]);
     setPick("");
   };
   const addPercentDiscount = () => {

@@ -98,14 +98,18 @@ export function ProvisionalEstimateView({
   const canEstimate = finished && verdict !== "ng";
 
   // Flow-added items follow the answers and the chosen plan; catalog prices follow the customer tier.
-  const syncFlowLines = (prev: Line[], next: FlowAnswer[], pid = planId) => {
+  const syncFlowLines = (prev: Line[], next: FlowAnswer[], pid = planId, dropUnrequested = true) => {
     const t = currentTier(config, next);
     const fits = (id: string) => {
       const item = catalog.get(id);
       return !!item && (!item.plan || item.plan === pid);
     };
     const want = new Set([...flowItemIds(config, next)].filter(fits));
-    const kept = prev.filter((l) => !l.itemId || catalog.get(l.itemId)?.group !== "flow" || want.has(l.itemId));
+    const kept = prev.filter((l) => {
+      const item = l.itemId ? catalog.get(l.itemId) : undefined;
+      if (!item || item.group !== "flow") return true;
+      return dropUnrequested ? want.has(item.id) : fits(item.id);
+    });
     const have = new Set(kept.map((l) => l.itemId));
     const added = [...want].filter((id) => !have.has(id)).map((id) => itemToLine(catalog.get(id)!, catalog.get(id)!.defaultQty || 1, t));
     return [...kept, ...added].map((l) => {
@@ -140,11 +144,11 @@ export function ProvisionalEstimateView({
     setLines((prev) => {
       const kept = prev.filter((l) => {
         const item = l.itemId ? catalog.get(l.itemId) : undefined;
-        return !item || item.group !== "base" || !item.plan || item.plan === pid;
+        return !item || item.group === "flow" || !item.plan || item.plan === pid;
       });
       const have = new Set(kept.map((l) => l.itemId));
       const added = config.priceItems.filter((i) => i.group === "base" && i.plan === pid && !have.has(i.id)).map((i) => itemToLine(i, i.defaultQty, tier));
-      return syncFlowLines([...kept, ...added], answers, pid);
+      return syncFlowLines([...kept, ...added], answers, pid, false);
     });
   };
 
@@ -322,7 +326,7 @@ export function ProvisionalEstimateView({
                 title="4. 見積内容・金額調整"
                 right={!isAdmin && <span className="text-xs text-slate-500">単価の調整幅：−{config.salesDiscountPct}%〜+{config.salesMarkupPct}%</span>}
               >
-                <LineEditor lines={lines} onChange={setLines} config={config} mode={isAdmin ? "admin" : "sales"} disabled={readOnly} />
+                <LineEditor lines={lines} onChange={setLines} config={config} mode={isAdmin ? "admin" : "sales"} disabled={readOnly} tier={tier} />
               </Section>
 
               <Section icon={<ClipboardList className="w-5 h-5" />} title="5. 案件情報">
