@@ -3,6 +3,17 @@ import { currentUser } from "./session";
 import { UserError } from "./portal";
 import { SetupError } from "./backend";
 import type { User } from "@/lib/types";
+import { describeRequest, writeLog } from "./audit-log";
+
+async function responseId(res: NextResponse): Promise<string> {
+  try {
+    const j = await res.clone().json();
+    const d = j?.data;
+    return String(d?.id || d?.customer?.id || d?.account?.id || "");
+  } catch {
+    return "";
+  }
+}
 
 export function ok<T>(data: T, init?: ResponseInit) {
   return NextResponse.json({ status: "success", data }, init);
@@ -35,9 +46,15 @@ export function authed(handler: Handler, opts: { role?: number; allowPending?: b
         return fail("リクエストが正しくありません。");
       }
     }
+    const log = req.method === "GET" ? null : describeRequest(new URL(req.url).pathname, body);
+    const record = (result: string, target = "") =>
+      log && writeLog({ userId: user.id, userName: user.name, action: log.action, target: target || log.target, detail: log.detail, result });
     try {
-      return await handler(user, body);
+      const res = await handler(user, body);
+      record("成功", await responseId(res));
+      return res;
     } catch (e) {
+      record(`失敗：${e instanceof UserError || e instanceof SetupError ? e.message : "サーバーエラー"}`);
       if (e instanceof UserError) return fail(e.message);
       if (e instanceof SetupError) {
         console.error(e);

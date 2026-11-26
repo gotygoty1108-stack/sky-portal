@@ -13,6 +13,8 @@ export const SHEET_HEADERS = {
   Estimates: ["id", "customerId", "date", "title", "amount", "type", "details", "createdAt", "sourceId", "data", "updatedAt"],
   Contracts: ["id", "customerId", "date", "title", "amount", "createdAt", "estimateId", "status", "data", "updatedAt", "confirmedAt"],
   Settings: ["key", "value", "updatedAt"],
+  // Stored in the separate log spreadsheet (LOG_SPREADSHEET_ID).
+  Logs: ["at", "userId", "userName", "action", "target", "detail", "result"],
 } as const;
 
 export type SheetName = keyof typeof SHEET_HEADERS;
@@ -65,9 +67,14 @@ class SheetsBackend implements Backend {
   private sheetMeta = new Map<string, { sheetId: number; columnCount: number }>();
   private headerCache = new Map<string, string[]>();
 
+  constructor(
+    private envName: "SPREADSHEET_ID" | "LOG_SPREADSHEET_ID",
+    private sheets: SheetName[],
+  ) {}
+
   private get id(): string {
-    const id = process.env.SPREADSHEET_ID;
-    if (!id) throw new Error("SPREADSHEET_ID is not set");
+    const id = process.env[this.envName];
+    if (!id) throw new Error(`${this.envName} is not set`);
     return id;
   }
 
@@ -97,7 +104,7 @@ class SheetsBackend implements Backend {
       if (res.status === 403) {
         throw new SetupError("スプレッドシートを編集する権限がありません。サービスアカウントのメールアドレスを「編集者」として共有してください。");
       }
-      if (res.status === 404) throw new SetupError("スプレッドシートが見つかりません。SPREADSHEET_ID を確認してください。");
+      if (res.status === 404) throw new SetupError(`スプレッドシートが見つかりません。${this.envName} を確認してください。`);
       const retryable = res.status === 429 || res.status >= 500;
       if (!retryable || attempt >= 4) throw new Error(`Sheets API ${res.status}: ${await res.text()}`);
       await res.body?.cancel();
@@ -110,7 +117,7 @@ class SheetsBackend implements Backend {
     if (!this.ready) {
       this.ready = (async () => {
         await this.loadMeta();
-        const missing = (Object.keys(SHEET_HEADERS) as SheetName[]).filter((n) => !this.sheetMeta.has(n));
+        const missing = this.sheets.filter((n) => !this.sheetMeta.has(n));
         if (missing.length === 0) return;
         try {
           await this.api(":batchUpdate", {
@@ -250,6 +257,7 @@ function mockSeed(): Record<string, Cell[][]> {
     Estimates: [[...SHEET_HEADERS.Estimates]],
     Contracts: [[...SHEET_HEADERS.Contracts]],
     Settings: [[...SHEET_HEADERS.Settings]],
+    Logs: [[...SHEET_HEADERS.Logs]],
   };
 }
 
@@ -298,6 +306,7 @@ class MockBackend implements Backend {
 }
 
 let instance: Backend | null = null;
+let logInstance: Backend | null = null;
 
 export function backend(): Backend {
   if (!instance) {
@@ -305,8 +314,16 @@ export function backend(): Backend {
       if (process.env.VERCEL_ENV === "production") throw new Error("USE_MOCK_DATA must not be set in production");
       instance = new MockBackend();
     } else {
-      instance = new SheetsBackend();
+      instance = new SheetsBackend("SPREADSHEET_ID", (Object.keys(SHEET_HEADERS) as SheetName[]).filter((n) => n !== "Logs"));
     }
   }
   return instance;
+}
+
+/** Backend for the log spreadsheet; null when logging is not configured. */
+export function logBackend(): Backend | null {
+  if (process.env.USE_MOCK_DATA === "1") return backend();
+  if (!process.env.LOG_SPREADSHEET_ID) return null;
+  logInstance ||= new SheetsBackend("LOG_SPREADSHEET_ID", ["Logs"]);
+  return logInstance;
 }
