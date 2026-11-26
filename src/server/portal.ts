@@ -19,8 +19,11 @@ import { byNewest } from "@/lib/format";
 import {
   adjustRange,
   currentTier,
-  tierPrice,
   validAnswerPrefix,
+  sortLines,
+  withTierDiscount,
+  SORT_GROUPS,
+  type SortGroup,
   FLOW_CATEGORIES,
   maxCategory,
   parseConfig,
@@ -396,6 +399,7 @@ function cleanConfig(input: Record<string, unknown>): EstimateConfig {
         group: GROUPS.includes(i.group as PriceGroup) ? (i.group as PriceGroup) : "option",
         plan: cleanId(i.plan),
         tierPrices: cleanTierPrices(i.tierPrices),
+        ...(SORT_GROUPS.includes(i.sortGroup as SortGroup) ? { sortGroup: i.sortGroup as SortGroup } : {}),
       }))
       .filter((i) => i.id && i.name),
     questions: list(input.questions, 50)
@@ -465,6 +469,7 @@ function cleanLines(v: unknown): Line[] {
       qty: cleanNum(l.qty, 0, 9999),
       unit: cleanText(l.unit, 10),
       ...(l.discount ? { discount: true } : {}),
+      ...(l.discount && l.auto === "tierDiscount" ? { auto: "tierDiscount" as const } : {}),
     }))
     .filter((l) => l.name);
 }
@@ -488,7 +493,7 @@ function cleanCategory(v: unknown): number {
 }
 
 // Sales accounts may only move catalog prices within the configured range.
-function applyPriceRules(lines: Line[], config: EstimateConfig, user: User, tier: string): Line[] {
+function applyPriceRules(lines: Line[], config: EstimateConfig, user: User): Line[] {
   const catalog = new Map(config.priceItems.map((i) => [i.id, i]));
   return lines.map((l) => {
     const item = l.itemId ? catalog.get(l.itemId) : undefined;
@@ -498,7 +503,7 @@ function applyPriceRules(lines: Line[], config: EstimateConfig, user: User, tier
       if (!isAdmin(user) && rest.discount) throw new UserError("値引き行の追加は管理者のみ可能です。");
       return rest;
     }
-    const price = tierPrice(item, tier);
+    const price = item.unitPrice;
     const line = { ...l, basePrice: price };
     if (!isAdmin(user)) {
       const [min, max] = adjustRange(price, config.salesDiscountPct, config.salesMarkupPct);
@@ -536,7 +541,9 @@ export async function saveEstimate(input: Record<string, unknown>, user: User): 
     return opt ? { ...a, verdict: opt.verdict, flightCategory: opt.flightCategory } : a;
   });
   const tier = type === "仮見積" ? currentTier(config, validAnswerPrefix(config, answers)) : cleanId(raw.tier);
-  const lines = applyPriceRules(cleanLines(raw.lines), config, user, tier);
+  const cleaned = cleanLines(raw.lines);
+  // 仮見積: the tier discount is always recalculated; 本見積 keeps the admin's lines as entered.
+  const lines = type === "仮見積" ? sortLines(withTierDiscount(applyPriceRules(cleaned.filter((l) => !l.auto), config, user), config, tier), config) : applyPriceRules(cleaned, config, user);
   if (lines.length === 0) throw new UserError("見積項目を1つ以上入力してください。");
   const verdict: Verdict = type === "仮見積" ? worstVerdict(answers) : VERDICTS.includes(raw.verdict as Verdict) ? (raw.verdict as Verdict) : "ok";
   if (type === "仮見積" && verdict === "ng") throw new UserError("飛行不可の条件が含まれるため、仮見積を作成できません。");

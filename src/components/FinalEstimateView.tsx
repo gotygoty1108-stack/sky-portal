@@ -142,7 +142,7 @@ export function FinalEstimateView({
           </Section>
 
           <Section icon={<ClipboardList className="w-5 h-5" />} title="2. 見積項目（自由に追加・編集・値引きできます）">
-            <LineEditor lines={lines} onChange={setLines} config={config} mode="admin" disabled={readOnly} tier={base?.tier} />
+            <LineEditor lines={lines} onChange={setLines} config={config} mode="admin" disabled={readOnly} />
           </Section>
 
           <Section icon={<ClipboardList className="w-5 h-5" />} title="3. 見積書の情報">

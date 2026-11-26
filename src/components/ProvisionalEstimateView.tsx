@@ -11,7 +11,8 @@ import {
   firstQuestion,
   lastChoice,
   currentTier,
-  tierPrice,
+  sortLines,
+  withTierDiscount,
   worstVerdict,
   type EstimateConfig,
   type EstimateData,
@@ -74,7 +75,7 @@ export function ProvisionalEstimateView({
   const [answers, setAnswers] = useState<FlowAnswer[]>(initial?.data.answers || []);
   const [planId, setPlanId] = useState(initial?.data.planId ?? firstPlan);
   const [lines, setLines] = useState<Line[]>(
-    () => initial?.data.lines || config.priceItems.filter((i) => i.group === "base" && (!i.plan || i.plan === firstPlan)).map((i) => itemToLine(i)),
+    () => initial?.data.lines.filter((l) => !l.auto) || config.priceItems.filter((i) => i.group === "base" && (!i.plan || i.plan === firstPlan)).map((i) => itemToLine(i)),
   );
   const [title, setTitle] = useState(initial?.title || "ドローン業務 仮見積書");
   const [date, setDate] = useState(initial ? toInputDate(initial.date) : todayInput());
@@ -99,7 +100,6 @@ export function ProvisionalEstimateView({
 
   // Flow-added items follow the answers and the chosen plan; catalog prices follow the customer tier.
   const syncFlowLines = (prev: Line[], next: FlowAnswer[], pid = planId, dropUnrequested = true) => {
-    const t = currentTier(config, next);
     const fits = (id: string) => {
       const item = catalog.get(id);
       return !!item && (!item.plan || item.plan === pid);
@@ -111,11 +111,11 @@ export function ProvisionalEstimateView({
       return dropUnrequested ? want.has(item.id) : fits(item.id);
     });
     const have = new Set(kept.map((l) => l.itemId));
-    const added = [...want].filter((id) => !have.has(id)).map((id) => itemToLine(catalog.get(id)!, catalog.get(id)!.defaultQty || 1, t));
-    return [...kept, ...added].map((l) => {
+    const added = [...want].filter((id) => !have.has(id)).map((id) => itemToLine(catalog.get(id)!, catalog.get(id)!.defaultQty || 1));
+    return sortLines([...kept, ...added], config).map((l) => {
       const item = l.itemId ? catalog.get(l.itemId) : undefined;
       if (!item) return l;
-      const price = tierPrice(item, t);
+      const price = item.unitPrice;
       return l.basePrice === price ? l : { ...l, basePrice: price, unitPrice: l.unitPrice === l.basePrice || l.basePrice === undefined ? price : l.unitPrice };
     });
   };
@@ -147,7 +147,7 @@ export function ProvisionalEstimateView({
         return !item || item.group === "flow" || !item.plan || item.plan === pid;
       });
       const have = new Set(kept.map((l) => l.itemId));
-      const added = config.priceItems.filter((i) => i.group === "base" && i.plan === pid && !have.has(i.id)).map((i) => itemToLine(i, i.defaultQty, tier));
+      const added = config.priceItems.filter((i) => i.group === "base" && i.plan === pid && !have.has(i.id)).map((i) => itemToLine(i, i.defaultQty));
       return syncFlowLines([...kept, ...added], answers, pid, false);
     });
   };
@@ -155,10 +155,11 @@ export function ProvisionalEstimateView({
   const toggleOption = (id: string, on: boolean) => {
     const item = catalog.get(id);
     if (!item) return;
-    setLines((prev) => (on ? [...prev, itemToLine(item, item.defaultQty || 1, tier)] : prev.filter((l) => l.itemId !== id)));
+    setLines((prev) => (on ? sortLines([...prev, itemToLine(item, item.defaultQty || 1)], config) : prev.filter((l) => l.itemId !== id)));
   };
 
-  const data: EstimateData = { answers, verdict, flightCategory, planId, tier, lines, location, workDate, memo };
+  const shownLines = withTierDiscount(lines, config, tier);
+  const data: EstimateData = { answers, verdict, flightCategory, planId, tier, lines: shownLines, location, workDate, memo };
 
   const handleSave = async () => {
     setSaving(true);
@@ -313,7 +314,7 @@ export function ProvisionalEstimateView({
                               <div className="font-bold text-sm text-slate-800">{i.name}</div>
                               {i.description && <div className="text-xs text-slate-500">{i.description}</div>}
                             </div>
-                            <span className="text-sm font-bold text-slate-600 whitespace-nowrap">{yen(tierPrice(i, tier))}</span>
+                            <span className="text-sm font-bold text-slate-600 whitespace-nowrap">{yen(i.unitPrice)}</span>
                           </label>
                         );
                       })}
@@ -326,7 +327,7 @@ export function ProvisionalEstimateView({
                 title="4. 見積内容・金額調整"
                 right={!isAdmin && <span className="text-xs text-slate-500">単価の調整幅：−{config.salesDiscountPct}%〜+{config.salesMarkupPct}%</span>}
               >
-                <LineEditor lines={lines} onChange={setLines} config={config} mode={isAdmin ? "admin" : "sales"} disabled={readOnly} tier={tier} />
+                <LineEditor lines={shownLines} onChange={(ls) => setLines(ls.filter((l) => !l.auto))} config={config} mode={isAdmin ? "admin" : "sales"} disabled={readOnly} />
               </Section>
 
               <Section icon={<ClipboardList className="w-5 h-5" />} title="5. 案件情報">
@@ -366,7 +367,7 @@ export function ProvisionalEstimateView({
                   <span className="text-xs text-slate-400">未チェック</span>
                 )}
               </div>
-              <Totals lines={canEstimate ? lines : []} taxRate={config.taxRate} />
+              <Totals lines={canEstimate ? shownLines : []} taxRate={config.taxRate} />
               <Button variant="secondary" className="w-full" icon={Eye} onClick={() => setPreview(true)} disabled={!canEstimate}>
                 お客様用の仮見積書を表示・印刷
               </Button>

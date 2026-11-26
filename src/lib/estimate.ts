@@ -68,7 +68,43 @@ export type PriceItem = {
   plan: string;
   /** Unit price per customer tier id; missing = unitPrice. */
   tierPrices?: Record<string, number>;
+  /** Position group in estimates; missing = derived from `group`. */
+  sortGroup?: SortGroup;
 };
+
+export const SORT_GROUP_LABEL = { plan: "プラン", staff: "人件費", surcharge: "加算", option: "オプション" } as const;
+export type SortGroup = keyof typeof SORT_GROUP_LABEL;
+export const SORT_GROUPS = Object.keys(SORT_GROUP_LABEL) as SortGroup[];
+
+export function itemSortGroup(item: PriceItem): SortGroup {
+  return item.sortGroup || (item.group === "base" ? "plan" : item.group === "flow" ? "surcharge" : "option");
+}
+
+/** Plan → staff → surcharges → options → free lines → discounts → tier discount (stable). */
+export function sortLines(lines: Line[], config: EstimateConfig): Line[] {
+  const catalog = new Map(config.priceItems.map((i) => [i.id, i]));
+  const rank = (l: Line) => {
+    if (l.auto) return 7;
+    if (l.discount) return 6;
+    const item = l.itemId ? catalog.get(l.itemId) : undefined;
+    return item ? SORT_GROUPS.indexOf(itemSortGroup(item)) : 5;
+  };
+  return lines.map((l, i) => ({ l, i, r: rank(l) })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.l);
+}
+
+/** Replaces the generated tier-discount line: Σ (standard − tier price) × qty over catalog lines. */
+export function withTierDiscount(lines: Line[], config: EstimateConfig, tier: string): Line[] {
+  const rest = lines.filter((l) => !l.auto);
+  const t = config.tiers.find((x) => x.id === tier);
+  if (!t) return rest;
+  const catalog = new Map(config.priceItems.map((i) => [i.id, i]));
+  const amount = rest.reduce((sum, l) => {
+    const item = !l.discount && l.itemId ? catalog.get(l.itemId) : undefined;
+    return item ? sum + Math.round(Math.max(0, item.unitPrice - tierPrice(item, tier)) * l.qty) : sum;
+  }, 0);
+  if (amount <= 0) return rest;
+  return [...rest, { name: `${t.label.replace(/価格$/, "")}割引`, unitPrice: amount, qty: 1, unit: "式", discount: true, auto: "tierDiscount" }];
+}
 
 export type Plan = { id: string; label: string; description: string };
 
@@ -100,6 +136,8 @@ export type Line = {
   qty: number;
   unit: string;
   discount?: boolean;
+  /** Generated line (customer-tier discount); recalculated, not edited by sales. */
+  auto?: "tierDiscount";
 };
 
 export type FlowAnswer = {
@@ -386,9 +424,8 @@ export function adjustRange(basePrice: number, downPct: number, upPct: number): 
   return [Math.ceil(basePrice * (1 - downPct / 100)), Math.floor(basePrice * (1 + upPct / 100))];
 }
 
-export function itemToLine(item: PriceItem, qty = item.defaultQty, tier?: string): Line {
-  const price = tierPrice(item, tier);
-  return { itemId: item.id, name: item.name, basePrice: price, unitPrice: price, qty, unit: item.unit };
+export function itemToLine(item: PriceItem, qty = item.defaultQty): Line {
+  return { itemId: item.id, name: item.name, basePrice: item.unitPrice, unitPrice: item.unitPrice, qty, unit: item.unit };
 }
 
 export const newKey = () => Math.random().toString(36).slice(2, 8);
