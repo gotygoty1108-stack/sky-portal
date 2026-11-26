@@ -103,10 +103,10 @@ export async function createAccount(input: Record<string, unknown>): Promise<{ a
   return withLock(async () => {
     const { Accounts } = await backend().readMany(["Accounts"]);
     const maxNo = Accounts.rows.reduce((max, r) => {
-      const m = /^u(\d+)$/.exec(str(r.id));
+      const m = /^sky-(\d+)$/.exec(str(r.id));
       return m ? Math.max(max, parseInt(m[1], 10)) : max;
     }, 0);
-    const id = `u${String(maxNo + 1).padStart(3, "0")}`;
+    const id = `sky-${String(maxNo + 1).padStart(3, "0")}`;
     const now = nowString();
     await backend().append("Accounts", { id, password: hashed, team, name, role, status: TEMP, updatedAt: now });
     return { account: { id, name, team, role, pending: true, updatedAt: now }, tempPassword: pw };
@@ -123,9 +123,14 @@ export async function updateAccount(input: Record<string, unknown>, admin: User)
     const row = Accounts.rows.find((r) => str(r.id) === id);
     if (!row) throw new UserError("アカウントが見つかりません。");
     const team = await cleanTeam(input.team, str(row.team).trim());
+    const newId = typeof input.newId === "string" && input.newId.trim() ? input.newId.trim() : id;
+    if (newId !== id) {
+      if (!/^[A-Za-z0-9_-]{2,30}$/.test(newId)) throw new UserError("IDは半角英数字・ハイフン・アンダーバーの2〜30文字で入力してください。");
+      if (Accounts.rows.some((r) => str(r.id) === newId)) throw new UserError(`ID「${newId}」はすでに使われています。`);
+    }
     const now = nowString();
-    await backend().updateCells("Accounts", row._row, { name, team, role, updatedAt: now });
-    return { ...toAccount(row), name, team, role, updatedAt: now };
+    await backend().updateCells("Accounts", row._row, { id: newId, name, team, role, updatedAt: now });
+    return { ...toAccount(row), id: newId, name, team, role, updatedAt: now };
   });
 }
 

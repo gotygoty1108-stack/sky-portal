@@ -8,6 +8,10 @@ import {
   itemToLine,
   maxCategory,
   nextQuestion,
+  firstQuestion,
+  lastChoice,
+  currentTier,
+  tierPrice,
   worstVerdict,
   type EstimateConfig,
   type EstimateData,
@@ -82,36 +86,51 @@ export function ProvisionalEstimateView({
   const [savedId, setSavedId] = useState(initial?.id || "");
 
   const current: FlowQuestion | null = useMemo(() => {
-    if (answers.length === 0) return config.questions[0] || null;
-    const last = answers[answers.length - 1];
-    const q = config.questions.find((x) => x.id === last.questionId);
-    const o = q?.options.find((x) => x.id === last.optionId);
-    return q && o ? nextQuestion(config, q, o) : null;
+    if (answers.length === 0) return firstQuestion(config);
+    const last = lastChoice(config, answers);
+    return last ? nextQuestion(config, last.question, last.options, answers) : null;
   }, [answers, config]);
+  const [picked, setPicked] = useState<string[]>([]);
+  const tier = currentTier(config, answers);
   const finished = answers.length > 0 && current === null;
   const verdict = worstVerdict(answers);
   const flightCategory = maxCategory(answers);
   const canEstimate = finished && verdict !== "ng";
 
-  const syncFlowLines = (prev: Line[], next: FlowAnswer[]) => {
-    const want = flowItemIds(config, next);
+  // Flow-added items follow the answers and the chosen plan; catalog prices follow the customer tier.
+  const syncFlowLines = (prev: Line[], next: FlowAnswer[], pid = planId) => {
+    const t = currentTier(config, next);
+    const fits = (id: string) => {
+      const item = catalog.get(id);
+      return !!item && (!item.plan || item.plan === pid);
+    };
+    const want = new Set([...flowItemIds(config, next)].filter(fits));
     const kept = prev.filter((l) => !l.itemId || catalog.get(l.itemId)?.group !== "flow" || want.has(l.itemId));
     const have = new Set(kept.map((l) => l.itemId));
-    const added = [...want].filter((id) => !have.has(id) && catalog.has(id)).map((id) => itemToLine(catalog.get(id)!, catalog.get(id)!.defaultQty || 1));
-    return [...kept, ...added];
+    const added = [...want].filter((id) => !have.has(id)).map((id) => itemToLine(catalog.get(id)!, catalog.get(id)!.defaultQty || 1, t));
+    return [...kept, ...added].map((l) => {
+      const item = l.itemId ? catalog.get(l.itemId) : undefined;
+      if (!item) return l;
+      const price = tierPrice(item, t);
+      return l.basePrice === price ? l : { ...l, basePrice: price, unitPrice: l.unitPrice === l.basePrice || l.basePrice === undefined ? price : l.unitPrice };
+    });
   };
 
-  const choose = (q: FlowQuestion, o: FlowOption) => {
+  const choose = (q: FlowQuestion, opts: FlowOption[]) => {
+    if (opts.length === 0) return;
     const next = [
       ...answers,
-      { questionId: q.id, optionId: o.id, category: FLOW_CATEGORIES[q.category], question: q.title, answer: o.label, verdict: o.verdict, flightCategory: o.flightCategory, note: o.note },
+      ...opts.map((o) => ({ questionId: q.id, optionId: o.id, category: FLOW_CATEGORIES[q.category], question: q.title, answer: o.label, verdict: o.verdict, flightCategory: o.flightCategory, note: o.note })),
     ];
+    setPicked([]);
     setAnswers(next);
     setLines((prev) => syncFlowLines(prev, next));
   };
 
   const redoFrom = (idx: number) => {
-    const next = answers.slice(0, idx);
+    const start = answers.findIndex((a, i) => i <= idx && a.questionId === answers[idx].questionId && answers.slice(i, idx + 1).every((b) => b.questionId === a.questionId));
+    const next = answers.slice(0, start < 0 ? idx : start);
+    setPicked([]);
     setAnswers(next);
     setLines((prev) => syncFlowLines(prev, next));
   };
@@ -124,18 +143,18 @@ export function ProvisionalEstimateView({
         return !item || item.group !== "base" || !item.plan || item.plan === pid;
       });
       const have = new Set(kept.map((l) => l.itemId));
-      const added = config.priceItems.filter((i) => i.group === "base" && i.plan === pid && !have.has(i.id)).map((i) => itemToLine(i));
-      return [...kept, ...added];
+      const added = config.priceItems.filter((i) => i.group === "base" && i.plan === pid && !have.has(i.id)).map((i) => itemToLine(i, i.defaultQty, tier));
+      return syncFlowLines([...kept, ...added], answers, pid);
     });
   };
 
   const toggleOption = (id: string, on: boolean) => {
     const item = catalog.get(id);
     if (!item) return;
-    setLines((prev) => (on ? [...prev, itemToLine(item, item.defaultQty || 1)] : prev.filter((l) => l.itemId !== id)));
+    setLines((prev) => (on ? [...prev, itemToLine(item, item.defaultQty || 1, tier)] : prev.filter((l) => l.itemId !== id)));
   };
 
-  const data: EstimateData = { answers, verdict, flightCategory, planId, lines, location, workDate, memo };
+  const data: EstimateData = { answers, verdict, flightCategory, planId, tier, lines, location, workDate, memo };
 
   const handleSave = async () => {
     setSaving(true);
@@ -192,18 +211,44 @@ export function ProvisionalEstimateView({
                 </div>
                 <div className="font-bold text-slate-800 text-lg mb-1">{current.title}</div>
                 {current.help && <div className="text-xs text-slate-500 mb-3">{current.help}</div>}
-                <div className="grid sm:grid-cols-2 gap-2 mt-3">
-                  {current.options.map((o) => (
-                    <button
-                      key={o.id}
-                      onClick={() => choose(current, o)}
-                      className="text-left bg-white border border-slate-200 hover:border-blue-500 hover:shadow-md rounded-lg p-3 transition-all"
-                    >
-                      <div className="font-bold text-slate-800 text-sm">{o.label}</div>
-                      {o.description && <div className="text-xs text-slate-500 mt-0.5">{o.description}</div>}
-                    </button>
-                  ))}
-                </div>
+                {current.multiple ? (
+                  <>
+                    <div className="text-xs font-bold text-blue-600">複数選択できます</div>
+                    <div className="grid sm:grid-cols-2 gap-2 mt-2">
+                      {current.options.map((o) => {
+                        const on = picked.includes(o.id);
+                        return (
+                          <label
+                            key={o.id}
+                            className={`flex items-start gap-2 text-left border rounded-lg p-3 cursor-pointer transition-all ${on ? "bg-blue-50 border-blue-500" : "bg-white border-slate-200 hover:border-blue-400"}`}
+                          >
+                            <input type="checkbox" className="mt-1" checked={on} onChange={(e) => setPicked((p) => (e.target.checked ? [...p, o.id] : p.filter((x) => x !== o.id)))} />
+                            <span>
+                              <span className="block font-bold text-slate-800 text-sm">{o.label}</span>
+                              {o.description && <span className="block text-xs text-slate-500 mt-0.5">{o.description}</span>}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <Button className="mt-3" onClick={() => choose(current, current.options.filter((o) => picked.includes(o.id)))} disabled={picked.length === 0}>
+                      決定して次へ
+                    </Button>
+                  </>
+                ) : (
+                  <div className="grid sm:grid-cols-2 gap-2 mt-3">
+                    {current.options.map((o) => (
+                      <button
+                        key={o.id}
+                        onClick={() => choose(current, [o])}
+                        className="text-left bg-white border border-slate-200 hover:border-blue-500 hover:shadow-md rounded-lg p-3 transition-all"
+                      >
+                        <div className="font-bold text-slate-800 text-sm">{o.label}</div>
+                        {o.description && <div className="text-xs text-slate-500 mt-0.5">{o.description}</div>}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -251,7 +296,7 @@ export function ProvisionalEstimateView({
                 <Section icon={<ClipboardList className="w-5 h-5" />} title="3. オプション">
                   <div className="grid sm:grid-cols-2 gap-3">
                     {config.priceItems
-                      .filter((i) => i.group === "option")
+                      .filter((i) => i.group === "option" && (!i.plan || i.plan === planId))
                       .map((i) => {
                         const on = lines.some((l) => l.itemId === i.id);
                         return (
@@ -264,7 +309,7 @@ export function ProvisionalEstimateView({
                               <div className="font-bold text-sm text-slate-800">{i.name}</div>
                               {i.description && <div className="text-xs text-slate-500">{i.description}</div>}
                             </div>
-                            <span className="text-sm font-bold text-slate-600 whitespace-nowrap">{yen(i.unitPrice)}</span>
+                            <span className="text-sm font-bold text-slate-600 whitespace-nowrap">{yen(tierPrice(i, tier))}</span>
                           </label>
                         );
                       })}
@@ -275,7 +320,7 @@ export function ProvisionalEstimateView({
               <Section
                 icon={<Calculator className="w-5 h-5" />}
                 title="4. 見積内容・金額調整"
-                right={!isAdmin && <span className="text-xs text-slate-500">単価の調整幅：±{config.salesAdjustPct}%</span>}
+                right={!isAdmin && <span className="text-xs text-slate-500">単価の調整幅：−{config.salesDiscountPct}%〜+{config.salesMarkupPct}%</span>}
               >
                 <LineEditor lines={lines} onChange={setLines} config={config} mode={isAdmin ? "admin" : "sales"} disabled={readOnly} />
               </Section>

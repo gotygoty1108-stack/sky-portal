@@ -56,7 +56,7 @@ export function FinalEstimateView({
   const [savedId, setSavedId] = useState(initial?.id || "");
   const sourceId = initial?.sourceId || source?.id || "";
 
-  const data: EstimateData = { answers, verdict, flightCategory, planId: base?.planId || "", lines, location, workDate, validUntil, memo, judgeMemo };
+  const data: EstimateData = { answers, verdict, flightCategory, planId: base?.planId || "", tier: base?.tier || "", lines, location, workDate, validUntil, memo, judgeMemo };
 
   const handleSave = async () => {
     if (verdict === "ng" && !confirm("飛行判定が「飛行不可」のままです。保存しますか？")) return;

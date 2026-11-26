@@ -21,11 +21,12 @@ import { AccountsPanel } from "./AccountsPanel";
 import { PageHeader, textareaClass } from "./estimate-ui";
 import { Button, Card, Field, inputClass } from "./ui";
 
-type Tab = "flow" | "prices" | "plans" | "teams" | "accounts" | "general";
+type Tab = "flow" | "prices" | "plans" | "tiers" | "teams" | "accounts" | "general";
 const TABS: { key: Tab; label: string }[] = [
   { key: "flow", label: "飛行条件チェック" },
   { key: "prices", label: "料金表" },
   { key: "plans", label: "プラン" },
+  { key: "tiers", label: "顧客区分" },
   { key: "teams", label: "チーム" },
   { key: "general", label: "営業・書類設定" },
   { key: "accounts", label: "アカウント管理" },
@@ -103,6 +104,19 @@ function OptionEditor({
               <option value="end">ここでチェック終了</option>
             </select>
           </label>
+          {config.tiers.length > 0 && (
+            <label className="text-xs text-slate-500">
+              顧客区分の設定
+              <select className={cell} value={option.tier || ""} onChange={(e) => set({ tier: e.target.value })}>
+                <option value="">（設定しない）</option>
+                {config.tiers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <input className={`${cell} sm:col-span-2`} value={option.note} onChange={(e) => set({ note: e.target.value })} placeholder="判定メモ（見積書に表示されます。例: DID上空飛行の許可が必要です）" />
         </div>
         <div className="flex flex-col">
@@ -169,6 +183,51 @@ function QuestionEditor({
             <input type="checkbox" checked={!!q.branchOnly} onChange={(e) => set({ branchOnly: e.target.checked })} />
             分岐で指定されたときだけ表示
           </label>
+          <label className="flex items-center gap-1.5 text-xs text-slate-600">
+            <input type="checkbox" checked={!!q.multiple} onChange={(e) => set({ multiple: e.target.checked })} />
+            複数選択できる
+          </label>
+          <div className="sm:col-span-4 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+            <span className="font-bold">カテゴリー条件：</span>
+            {[0, 1, 2, 3].map((c) => (
+              <label key={c} className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={!!q.showCategories?.includes(c)}
+                  onChange={(e) => set({ showCategories: e.target.checked ? [...(q.showCategories || []), c].sort() : (q.showCategories || []).filter((x) => x !== c) })}
+                />
+                {c === 0 ? "判定なし" : `カテゴリー${["", "Ⅰ", "Ⅱ", "Ⅲ"][c]}`}
+              </label>
+            ))}
+            <span className="text-slate-400">（チェックしたカテゴリーのときだけ表示。なし＝常に表示）</span>
+          </div>
+          <details className="sm:col-span-4 text-xs text-slate-600" open={!!q.showIfAny?.length}>
+            <summary className="cursor-pointer font-bold">回答条件：前の質問でいずれかを選んだときだけ表示（{q.showIfAny?.length || 0}件）</summary>
+            <div className="mt-2 space-y-2 max-h-64 overflow-y-auto">
+              {config.questions
+                .filter((x) => x.id !== q.id)
+                .map((x) => (
+                  <div key={x.id}>
+                    <div className="text-slate-500">{x.title}</div>
+                    <div className="flex flex-wrap gap-x-3">
+                      {x.options.map((o) => {
+                        const key = `${x.id}:${o.id}`;
+                        return (
+                          <label key={o.id} className="flex items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={!!q.showIfAny?.includes(key)}
+                              onChange={(e) => set({ showIfAny: e.target.checked ? [...(q.showIfAny || []), key] : (q.showIfAny || []).filter((k) => k !== key) })}
+                            />
+                            {o.label}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </details>
         </div>
         <div className="flex">
           <IconBtn onClick={() => onMove(-1)} label="上へ">
@@ -232,7 +291,7 @@ export function AdminSettingsView({
     set({
       questions: draft.questions
         .filter((_, j) => j !== i)
-        .map((q) => ({ ...q, options: q.options.map((o) => (o.next === id ? { ...o, next: "" } : o)) })),
+        .map((q) => ({ ...q, showIfAny: q.showIfAny?.filter((k) => !k.startsWith(`${id}:`)), options: q.options.map((o) => (o.next === id ? { ...o, next: "" } : o)) })),
     });
   };
 
@@ -325,6 +384,11 @@ export function AdminSettingsView({
                 <tr className="text-slate-600 border-b-2 border-slate-300">
                   <th className="text-left py-2">項目名 / 説明</th>
                   <th className="text-right py-2 w-28">単価（円）</th>
+                  {draft.tiers.map((t) => (
+                    <th key={t.id} className="text-right py-2 w-28">
+                      {t.label}
+                    </th>
+                  ))}
                   <th className="py-2 w-16">単位</th>
                   <th className="py-2 w-20">初期数量</th>
                   <th className="py-2 w-40">区分</th>
@@ -342,6 +406,23 @@ export function AdminSettingsView({
                     <td className="py-2 px-1">
                       <input type="number" min={0} className={`${cell} text-right`} value={it.unitPrice} onChange={(e) => setItem(i, { unitPrice: Math.max(0, Number(e.target.value) || 0) })} />
                     </td>
+                    {draft.tiers.map((t) => (
+                      <td key={t.id} className="py-2 px-1">
+                        <input
+                          type="number"
+                          min={0}
+                          className={`${cell} text-right`}
+                          value={it.tierPrices?.[t.id] ?? ""}
+                          placeholder="同じ"
+                          onChange={(e) => {
+                            const rest = { ...(it.tierPrices || {}) };
+                            if (e.target.value === "") delete rest[t.id];
+                            else rest[t.id] = Math.max(0, Number(e.target.value) || 0);
+                            setItem(i, { tierPrices: rest });
+                          }}
+                        />
+                      </td>
+                    ))}
                     <td className="py-2 px-1">
                       <input className={cell} value={it.unit} onChange={(e) => setItem(i, { unit: e.target.value })} />
                     </td>
@@ -420,6 +501,33 @@ export function AdminSettingsView({
         </Card>
       )}
 
+      {tab === "tiers" && (
+        <Card className="p-4 space-y-3">
+          <p className="text-sm text-slate-600">飛行条件チェックの選択肢で顧客区分を設定すると、料金表の区分別単価が使われ、特約事項が見積書に自動で印字されます。</p>
+          {draft.tiers.map((t, i) => (
+            <div key={t.id} className="border border-slate-200 rounded-lg p-3 space-y-2">
+              <div className="flex gap-2 items-center">
+                <input className={`${cell} font-bold`} value={t.label} onChange={(e) => set({ tiers: draft.tiers.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) })} placeholder="区分名（例：教育・非営利）" />
+                <IconBtn
+                  onClick={() => {
+                    if (!confirm(`「${t.label}」を削除しますか？`)) return;
+                    set({ tiers: draft.tiers.filter((_, j) => j !== i) });
+                  }}
+                  label="削除"
+                  danger
+                >
+                  <Trash2 className="w-4 h-4" />
+                </IconBtn>
+              </div>
+              <textarea className={textareaClass} value={t.note} onChange={(e) => set({ tiers: draft.tiers.map((x, j) => (j === i ? { ...x, note: e.target.value } : x)) })} placeholder="見積書に印字する特約事項" />
+            </div>
+          ))}
+          <Button variant="secondary" icon={Plus} onClick={() => set({ tiers: [...draft.tiers, { id: `t${newKey()}`, label: "", note: "" }] })}>
+            顧客区分を追加
+          </Button>
+        </Card>
+      )}
+
       {tab === "teams" && (
         <Card className="p-4 space-y-2">
           <p className="text-sm text-slate-600 mb-2">ここで作ったチームを、顧客登録とアカウント管理で選べます。チームが設定されたアカウントでは、顧客は自動でそのチームになります。</p>
@@ -445,9 +553,12 @@ export function AdminSettingsView({
 
       {tab === "general" && (
         <Card className="p-5 grid md:grid-cols-2 gap-4">
-          <Field label="営業担当者の値段調整幅（±％）">
-            <input type="number" min={0} max={100} className={inputClass} value={draft.salesAdjustPct} onChange={(e) => set({ salesAdjustPct: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} />
+          <Field label="営業担当者の値引き幅（−％）">
+            <input type="number" min={0} max={100} className={inputClass} value={draft.salesDiscountPct} onChange={(e) => set({ salesDiscountPct: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} />
             <span className="text-xs text-slate-500">営業担当者は、料金表の単価からこの範囲内で単価を変更できます。値引き行の追加は管理者のみです。</span>
+          </Field>
+          <Field label="営業担当者の上乗せ幅（＋％）">
+            <input type="number" min={0} max={1000} className={inputClass} value={draft.salesMarkupPct} onChange={(e) => set({ salesMarkupPct: Math.max(0, Math.min(1000, Number(e.target.value) || 0)) })} />
           </Field>
           <Field label="消費税率（％）">
             <input type="number" min={0} max={50} className={inputClass} value={Math.round(draft.taxRate * 100)} onChange={(e) => set({ taxRate: Math.max(0, Math.min(50, Number(e.target.value) || 0)) / 100 })} />
