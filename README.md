@@ -18,6 +18,7 @@ Google Apps Script 版ポータルを Next.js（Vercel）に移植したもの�
 | 名前 | 値 |
 | --- | --- |
 | `SPREADSHEET_ID` | スプレッドシート URL の `/d/` と `/edit` の間の文字列 |
+| `LOG_SPREADSHEET_ID` | （任意）ログ専用スプレッドシートのID。サービスアカウントを編集者として共有すると、ログイン・保存操作が「Logs」シートに記録されます |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | ダウンロードした JSON ファイルの中身をそのまま貼り付け |
 | `SESSION_SECRET` | 長いランダム文字列（例: `openssl rand -base64 32` の結果） |
 
